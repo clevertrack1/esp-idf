@@ -71,7 +71,7 @@
 #include "trax.h"
 #include "esp_ota_ops.h"
 #include "esp_efuse.h"
-#include "bootloader_common.h"
+#include "bootloader_flash_config.h"
 
 #define STRINGIFY(s) STRINGIFY2(s)
 #define STRINGIFY2(s) #s
@@ -79,7 +79,7 @@
 void start_cpu0(void) __attribute__((weak, alias("start_cpu0_default"))) __attribute__((noreturn));
 void start_cpu0_default(void) IRAM_ATTR __attribute__((noreturn));
 #if !CONFIG_FREERTOS_UNICORE
-static void IRAM_ATTR call_start_cpu1() __attribute__((noreturn));
+static void IRAM_ATTR call_start_cpu1(void) __attribute__((noreturn));
 void start_cpu1(void) __attribute__((weak, alias("start_cpu1_default"))) __attribute__((noreturn));
 void start_cpu1_default(void) IRAM_ATTR __attribute__((noreturn));
 static bool app_cpu_started = false;
@@ -117,7 +117,7 @@ static bool s_spiram_okay=true;
  * and the app CPU is in reset. We do have a stack, so we can do the initialization in C.
  */
 
-void IRAM_ATTR call_start_cpu0()
+void IRAM_ATTR call_start_cpu0(void)
 {
 #if CONFIG_FREERTOS_UNICORE
     RESET_REASON rst_reas[1];
@@ -173,8 +173,6 @@ void IRAM_ATTR call_start_cpu0()
         abort();
 #endif
     }
-# else  // If psram is uninitialized, we need to improve the flash cs timing.
-    bootloader_common_set_flash_cs_timing();
 #endif
 
     ESP_EARLY_LOGI(TAG, "Pro cpu up.");
@@ -206,7 +204,7 @@ void IRAM_ATTR call_start_cpu0()
         abort();
     }
     ESP_EARLY_LOGI(TAG, "Starting app cpu, entry point is %p", call_start_cpu1);
-    
+
     esp_flash_enc_mode_t mode;
     mode = esp_get_flash_encryption_mode();
     if (mode == ESP_FLASH_ENC_MODE_DEVELOPMENT) {
@@ -279,7 +277,7 @@ static void wdt_reset_cpu1_info_enable(void)
     DPORT_REG_CLR_BIT(DPORT_APP_CPU_RECORD_CTRL_REG, DPORT_APP_CPU_RECORD_ENABLE);
 }
 
-void IRAM_ATTR call_start_cpu1()
+void IRAM_ATTR call_start_cpu1(void)
 {
     asm volatile (\
                   "wsr    %0, vecbase\n" \
@@ -410,6 +408,16 @@ void start_cpu0_default(void)
     esp_flash_app_init();
     esp_err_t flash_ret = esp_flash_init_default_chip();
     assert(flash_ret == ESP_OK);
+
+    uint8_t revision = esp_efuse_get_chip_ver();
+    ESP_LOGI(TAG, "Chip Revision: %d", revision);
+    if (revision > CONFIG_ESP32_REV_MIN) {
+        ESP_LOGW(TAG, "Chip revision is higher than the one configured in menuconfig. Suggest to upgrade it.");
+    } else if(revision != CONFIG_ESP32_REV_MIN) {
+        ESP_LOGE(TAG, "ESP-IDF can't support this chip revision. Modify minimum supported revision in menuconfig");
+        abort();
+    }
+
 #ifdef CONFIG_PM_ENABLE
     esp_pm_impl_init();
 #ifdef CONFIG_PM_DFS_INIT_AUTO
@@ -433,6 +441,17 @@ void start_cpu0_default(void)
 
 #if CONFIG_ESP32_WIFI_SW_COEXIST_ENABLE
     esp_coex_adapter_register(&g_coex_adapter_funcs);
+#endif
+
+    bootloader_flash_update_id();
+#if !CONFIG_SPIRAM_BOOT_INIT  // If psram is uninitialized, we need to improve some flash configuration.
+    esp_image_header_t fhdr;
+    const esp_partition_t *partition = esp_ota_get_running_partition();
+    spi_flash_read(partition->address, &fhdr, sizeof(esp_image_header_t));
+    bootloader_flash_clock_config(&fhdr);
+    bootloader_flash_gpio_config(&fhdr);
+    bootloader_flash_dummy_config(&fhdr);
+    bootloader_flash_cs_timing_config();
 #endif
 
     portBASE_TYPE res = xTaskCreatePinnedToCore(&main_task, "main",
@@ -475,7 +494,7 @@ void start_cpu1_default(void)
 #endif //!CONFIG_FREERTOS_UNICORE
 
 #ifdef CONFIG_COMPILER_CXX_EXCEPTIONS
-size_t __cxx_eh_arena_size_get()
+size_t __cxx_eh_arena_size_get(void)
 {
     return CONFIG_COMPILER_CXX_EXCEPTIONS_EMG_POOL_SIZE;
 }

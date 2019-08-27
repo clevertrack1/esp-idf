@@ -160,8 +160,6 @@ esp_err_t esp_flash_get_chip_write_protect(esp_flash_t *chip, bool *write_protec
  * @note Correct behaviour of this function depends on the SPI flash chip model and chip_drv in use (via the 'chip->drv'
  * field).
  *
- * If write protection is enabled, destructive operations will fail with ESP_ERR_FLASH_PROTECTED.
- *
  * Some SPI flash chips may require a power cycle before write protect status can be cleared. Otherwise,
  * write protection can be removed via a follow-up call to this function.
  *
@@ -271,7 +269,7 @@ extern esp_flash_t *esp_flash_default_chip;
  *
  * Called by OS startup code. You do not need to call this in your own applications.
  */
-esp_err_t esp_flash_init_default_chip();
+esp_err_t esp_flash_init_default_chip(void);
 
 /**
  *  Enable OS-level SPI flash protections in IDF
@@ -280,7 +278,7 @@ esp_err_t esp_flash_init_default_chip();
  *
  * @return ESP_OK if success, otherwise failed. See return value of ``esp_flash_init_os_functions``.
  */
-esp_err_t esp_flash_app_init();
+esp_err_t esp_flash_app_init(void);
 
 /**
  *  Enable OS-level SPI flash for a specific chip.

@@ -48,6 +48,7 @@ extern "C" {
 #define ESP_ERR_MBEDTLS_SSL_WRITE_FAILED                  (ESP_ERR_ESP_TLS_BASE + 0x0E)  /*!< mbedtls api returned error */
 #define ESP_ERR_MBEDTLS_PK_PARSE_KEY_FAILED               (ESP_ERR_ESP_TLS_BASE + 0x0F)  /*!< mbedtls api returned failed  */
 #define ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED              (ESP_ERR_ESP_TLS_BASE + 0x10)  /*!< mbedtls api returned failed  */
+#define ESP_ERR_MBEDTLS_SSL_CONF_PSK_FAILED               (ESP_ERR_ESP_TLS_BASE + 0x11)  /*!< mbedtls api returned failed  */
 
 typedef struct esp_tls_last_error* esp_tls_error_handle_t;
 
@@ -77,7 +78,26 @@ typedef enum esp_tls_role {
 } esp_tls_role_t;
 
 /**
+ *  @brief ESP-TLS preshared key and hint structure
+ */
+typedef struct psk_key_hint {
+    const uint8_t* key;                     /*!< key in PSK authentication mode in binary format */
+    const size_t   key_size;                /*!< length of the key */
+    const char* hint;                       /*!< hint in PSK authentication mode in string format */
+} psk_hint_key_t;
+
+/**
  * @brief      ESP-TLS configuration parameters 
+ * 
+ * @note       Note about format of certificates:
+ *             - This structure includes certificates of a Certificate Authority, of client or server as well
+ *             as private keys, which may be of PEM or DER format. In case of PEM format, the buffer must be
+ *             NULL terminated (with NULL character included in certificate size).
+ *             - Certificate Authority's certificate may be a chain of certificates in case of PEM format,
+ *             but could be only one certificate in case of DER format
+ *             - Variables names of certificates and private key buffers and sizes are defined as unions providing
+ *             backward compatibility for legacy *_pem_buf and *_pem_bytes names which suggested only PEM format
+ *             was supported. It is encouraged to use generic names such as cacert_buf and cacert_bytes.
  */ 
 typedef struct esp_tls_cfg {
     const char **alpn_protos;               /*!< Application protocols required for HTTP2.
@@ -89,23 +109,47 @@ typedef struct esp_tls_cfg {
                                                  const char **alpn_protos = { "h2", NULL };
                                                  - where 'h2' is the protocol name */
  
-    const unsigned char *cacert_pem_buf;    /*!< Certificate Authority's certificate in a buffer.
-                                                 This buffer should be NULL terminated */
- 
-    unsigned int cacert_pem_bytes;          /*!< Size of Certificate Authority certificate
-                                                 pointed to by cacert_pem_buf */
+    union {
+    const unsigned char *cacert_buf;        /*!< Certificate Authority's certificate in a buffer.
+                                                 Format may be PEM or DER, depending on mbedtls-support
+                                                 This buffer should be NULL terminated in case of PEM */
+    const unsigned char *cacert_pem_buf;    /*!< CA certificate buffer legacy name */
+    };
 
-    const unsigned char *clientcert_pem_buf;/*!< Client certificate in a buffer
-                                                 This buffer should be NULL terminated */
+    union {
+    unsigned int cacert_bytes;              /*!< Size of Certificate Authority certificate
+                                                 pointed to by cacert_buf
+                                                 (including NULL-terminator in case of PEM format) */
+    unsigned int cacert_pem_bytes;          /*!< Size of Certificate Authority certificate legacy name */
+    };
 
-    unsigned int clientcert_pem_bytes;      /*!< Size of client certificate pointed to by
-                                                 clientcert_pem_buf */
+    union {
+    const unsigned char *clientcert_buf;    /*!< Client certificate in a buffer
+                                                 Format may be PEM or DER, depending on mbedtls-support
+                                                 This buffer should be NULL terminated in case of PEM */
+    const unsigned char *clientcert_pem_buf;     /*!< Client certificate legacy name */
+    };
 
-    const unsigned char *clientkey_pem_buf; /*!< Client key in a buffer
-                                                 This buffer should be NULL terminated */
+    union {
+    unsigned int clientcert_bytes;          /*!< Size of client certificate pointed to by
+                                                 clientcert_pem_buf
+                                                 (including NULL-terminator in case of PEM format) */
+    unsigned int clientcert_pem_bytes;      /*!< Size of client certificate legacy name */
+    };
 
-    unsigned int clientkey_pem_bytes;       /*!< Size of client key pointed to by
-                                                 clientkey_pem_buf */
+    union {
+    const unsigned char *clientkey_buf;     /*!< Client key in a buffer
+                                                 Format may be PEM or DER, depending on mbedtls-support
+                                                 This buffer should be NULL terminated in case of PEM */
+    const unsigned char *clientkey_pem_buf; /*!< Client key legacy name */
+    };
+
+    union {
+    unsigned int clientkey_bytes;           /*!< Size of client key pointed to by
+                                                 clientkey_pem_buf
+                                                 (including NULL-terminator in case of PEM format) */
+    unsigned int clientkey_pem_bytes;       /*!< Size of client key legacy name */
+    };
 
     const unsigned char *clientkey_password;/*!< Client key decryption password string */
 
@@ -125,6 +169,11 @@ typedef struct esp_tls_cfg {
                                                  If NULL, server certificate CN must match hostname. */
 
     bool skip_common_name;                  /*!< Skip any validation of server certificate CN field */
+
+    const psk_hint_key_t* psk_hint_key;     /*!< Pointer to PSK hint and key. if not NULL (and certificates are NULL)
+                                                 then PSK authentication is enabled with configured setup.
+                                                 Important note: the pointer must be valid for connection */
+
 } esp_tls_cfg_t;
 
 #ifdef CONFIG_ESP_TLS_SERVER
@@ -138,23 +187,41 @@ typedef struct esp_tls_cfg_server {
                                                      const char **alpn_protos = { "h2", NULL };
                                                      - where 'h2' is the protocol name */
 
-    const unsigned char *cacert_pem_buf;    /*!< Client CA certificate in a buffer.
+    union {
+    const unsigned char *cacert_buf;        /*!< Client CA certificate in a buffer.
                                                      This buffer should be NULL terminated */
+    const unsigned char *cacert_pem_buf;    /*!< Client CA certificate legacy name */
+    };
 
-    unsigned int cacert_pem_bytes;          /*!< Size of client CA certificate
+    union {
+    unsigned int cacert_bytes;              /*!< Size of client CA certificate
                                                      pointed to by cacert_pem_buf */
+    unsigned int cacert_pem_bytes;          /*!< Size of client CA certificate legacy name */
+    };
 
-    const unsigned char *servercert_pem_buf;    /*!< Server certificate in a buffer
+    union {
+    const unsigned char *servercert_buf;        /*!< Server certificate in a buffer
                                                      This buffer should be NULL terminated */
+    const unsigned char *servercert_pem_buf;    /*!< Server certificate legacy name */
+    };
 
-    unsigned int servercert_pem_bytes;          /*!< Size of server certificate pointed to by
+    union {
+    unsigned int servercert_bytes;             /*!< Size of server certificate pointed to by
                                                      servercert_pem_buf */
+    unsigned int servercert_pem_bytes;          /*!< Size of server certificate legacy name */
+    };
 
-    const unsigned char *serverkey_pem_buf;     /*!< Server key in a buffer
+    union {
+    const unsigned char *serverkey_buf;         /*!< Server key in a buffer
                                                      This buffer should be NULL terminated */
+    const unsigned char *serverkey_pem_buf;     /*!< Server key legacy name */
+    };
 
-    unsigned int serverkey_pem_bytes;           /*!< Size of server key pointed to by
+    union {
+    unsigned int serverkey_bytes;               /*!< Size of server key pointed to by
                                                      serverkey_pem_buf */
+    unsigned int serverkey_pem_bytes;           /*!< Size of server key legacy name */
+    };
 
     const unsigned char *serverkey_password;    /*!< Server key decryption password string */
 
@@ -229,7 +296,7 @@ typedef struct esp_tls {
  * @return      tls     Pointer to esp-tls as esp-tls handle if successfully initialized,
  *                      NULL if allocation error
  */
-esp_tls_t *esp_tls_init();
+esp_tls_t *esp_tls_init(void);
 
 
 
@@ -402,7 +469,7 @@ ssize_t esp_tls_get_bytes_avail(esp_tls_t *tls);
  *             - ESP_OK             if creating global CA store was successful.
  *             - ESP_ERR_NO_MEM     if an error occured when allocating the mbedTLS resources.
  */
-esp_err_t esp_tls_init_global_ca_store();
+esp_err_t esp_tls_init_global_ca_store(void);
 
 /**
  * @brief      Set the global CA store with the buffer provided in pem format.
@@ -435,7 +502,7 @@ esp_err_t esp_tls_set_global_ca_store(const unsigned char *cacert_pem_buf, const
  *             - Pointer to the global CA store currently being used    if successful.
  *             - NULL                                                   if there is no global CA store set.
  */
-mbedtls_x509_crt *esp_tls_get_global_ca_store();
+mbedtls_x509_crt *esp_tls_get_global_ca_store(void);
 
 /**
  * @brief      Free the global CA store currently being used.
@@ -443,7 +510,7 @@ mbedtls_x509_crt *esp_tls_get_global_ca_store();
  * The memory being used by the global CA store to store all the parsed certificates is
  * freed up. The application can call this API if it no longer needs the global CA store.
  */
-void esp_tls_free_global_ca_store();
+void esp_tls_free_global_ca_store(void);
 
 /**
  * @brief      Returns last error in esp_tls with detailed mbedtls related error codes.

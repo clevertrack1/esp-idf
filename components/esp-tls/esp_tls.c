@@ -158,7 +158,7 @@ err_freeaddr:
     return ret;
 }
 
-esp_err_t esp_tls_init_global_ca_store()
+esp_err_t esp_tls_init_global_ca_store(void)
 {
     if (global_cacert == NULL) {
         global_cacert = (mbedtls_x509_crt *)calloc(1, sizeof(mbedtls_x509_crt));
@@ -197,12 +197,12 @@ esp_err_t esp_tls_set_global_ca_store(const unsigned char *cacert_pem_buf, const
     return ESP_OK;
 }
 
-mbedtls_x509_crt *esp_tls_get_global_ca_store()
+mbedtls_x509_crt *esp_tls_get_global_ca_store(void)
 {
     return global_cacert;
 }
 
-void esp_tls_free_global_ca_store()
+void esp_tls_free_global_ca_store(void)
 {
     if (global_cacert) {
         mbedtls_x509_crt_free(global_cacert);
@@ -339,8 +339,8 @@ static esp_err_t set_server_config(esp_tls_cfg_server_t *cfg, esp_tls_t *tls)
     }
 #endif
 
-    if (cfg->cacert_pem_buf != NULL) {
-        esp_ret = set_ca_cert(tls, cfg->cacert_pem_buf, cfg->cacert_pem_bytes);
+    if (cfg->cacert_buf != NULL) {
+        esp_ret = set_ca_cert(tls, cfg->cacert_buf, cfg->cacert_bytes);
         if (esp_ret != ESP_OK) {
             return esp_ret;
         }
@@ -348,14 +348,14 @@ static esp_err_t set_server_config(esp_tls_cfg_server_t *cfg, esp_tls_t *tls)
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
     }
 
-    if (cfg->servercert_pem_buf != NULL && cfg->serverkey_pem_buf != NULL) {
+    if (cfg->servercert_buf != NULL && cfg->serverkey_buf != NULL) {
         esp_tls_pki_t pki = {
             .public_cert = &tls->servercert,
             .pk_key = &tls->serverkey,
-            .publiccert_pem_buf = cfg->servercert_pem_buf,
-            .publiccert_pem_bytes = cfg->servercert_pem_bytes,
-            .privkey_pem_buf = cfg->serverkey_pem_buf,
-            .privkey_pem_bytes = cfg->serverkey_pem_bytes,
+            .publiccert_pem_buf = cfg->servercert_buf,
+            .publiccert_pem_bytes = cfg->servercert_bytes,
+            .privkey_pem_buf = cfg->serverkey_buf,
+            .privkey_pem_bytes = cfg->serverkey_bytes,
             .privkey_password = cfg->serverkey_password,
             .privkey_password_len = cfg->serverkey_password_len,
         };
@@ -421,33 +421,50 @@ static esp_err_t set_client_config(const char *hostname, size_t hostlen, esp_tls
         if (esp_ret != ESP_OK) {
             return esp_ret;
         }
-    } else if (cfg->cacert_pem_buf != NULL) {
-        esp_err_t esp_ret = set_ca_cert(tls, cfg->cacert_pem_buf, cfg->cacert_pem_bytes);
+    } else if (cfg->cacert_buf != NULL) {
+        esp_err_t esp_ret = set_ca_cert(tls, cfg->cacert_buf, cfg->cacert_bytes);
         if (esp_ret != ESP_OK) {
             return esp_ret;
         }
+        mbedtls_ssl_conf_ca_chain(&tls->conf, tls->cacert_ptr, NULL);
+    } else if (cfg->psk_hint_key) {
+#if defined(CONFIG_ESP_TLS_PSK_VERIFICATION)
+        //
+        // PSK encryption mode is configured only if no certificate supplied and psk pointer not null
+        ESP_LOGD(TAG, "ssl psk authentication");
+        ret = mbedtls_ssl_conf_psk(&tls->conf, cfg->psk_hint_key->key, cfg->psk_hint_key->key_size,
+                           (const unsigned char *)cfg->psk_hint_key->hint, strlen(cfg->psk_hint_key->hint));
+        if (ret != 0) {
+            ESP_LOGE(TAG, "mbedtls_ssl_conf_psk returned -0x%x", -ret);
+            ESP_INT_EVENT_TRACKER_CAPTURE(tls->error_handle, ERR_TYPE_MBEDTLS, -ret);
+            return ESP_ERR_MBEDTLS_SSL_CONF_PSK_FAILED;            
+        }
+#else
+        ESP_LOGE(TAG, "psk_hint_key configured but not enabled in menuconfig: Please enable ESP_TLS_PSK_VERIFICATION option");
+        return ESP_ERR_INVALID_STATE;
+#endif
     } else {
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
     }
 
-    if (cfg->clientcert_pem_buf != NULL && cfg->clientkey_pem_buf != NULL) {
+    if (cfg->clientcert_buf != NULL && cfg->clientkey_buf != NULL) {
         esp_tls_pki_t pki = {
             .public_cert = &tls->clientcert,
             .pk_key = &tls->clientkey,
-            .publiccert_pem_buf = cfg->clientcert_pem_buf,
-            .publiccert_pem_bytes = cfg->clientcert_pem_bytes,
-            .privkey_pem_buf = cfg->clientkey_pem_buf,
-            .privkey_pem_bytes = cfg->clientkey_pem_bytes,
+            .publiccert_pem_buf = cfg->clientcert_buf,
+            .publiccert_pem_bytes = cfg->clientcert_bytes,
+            .privkey_pem_buf = cfg->clientkey_buf,
+            .privkey_pem_bytes = cfg->clientkey_bytes,
             .privkey_password = cfg->clientkey_password,
             .privkey_password_len = cfg->clientkey_password_len,
         };
         esp_err_t esp_ret = set_pki_context(tls, &pki);
         if (esp_ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to set server pki context");
+            ESP_LOGE(TAG, "Failed to set client pki context");
             return esp_ret;
         }
-    } else if (cfg->clientcert_pem_buf != NULL || cfg->clientkey_pem_buf != NULL) {
-        ESP_LOGE(TAG, "You have to provide both clientcert_pem_buf and clientkey_pem_buf for mutual authentication");
+    } else if (cfg->clientcert_buf != NULL || cfg->clientkey_buf != NULL) {
+        ESP_LOGE(TAG, "You have to provide both clientcert_buf and clientkey_buf for mutual authentication");
         return ESP_ERR_INVALID_STATE;
     }
     return ESP_OK;
@@ -628,7 +645,7 @@ static int esp_tls_low_level_conn(const char *hostname, int hostlen, int port, c
                     ESP_LOGE(TAG, "mbedtls_ssl_handshake returned -0x%x", -ret);
                     ESP_INT_EVENT_TRACKER_CAPTURE(tls->error_handle, ERR_TYPE_MBEDTLS, -ret);
                     ESP_INT_EVENT_TRACKER_CAPTURE(tls->error_handle, ERR_TYPE_ESP, ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED);
-                    if (cfg->cacert_pem_buf != NULL || cfg->use_global_ca_store == true) {
+                    if (cfg->cacert_buf != NULL || cfg->use_global_ca_store == true) {
                         /* This is to check whether handshake failed due to invalid certificate*/
                         verify_certificate(tls);
                     }
@@ -797,7 +814,7 @@ void esp_tls_server_session_delete(esp_tls_t *tls)
 };
 #endif /* ! CONFIG_ESP_TLS_SERVER */
 
-esp_tls_t *esp_tls_init()
+esp_tls_t *esp_tls_init(void)
 {
     esp_tls_t *tls = (esp_tls_t *)calloc(1, sizeof(esp_tls_t));
     if (!tls) {

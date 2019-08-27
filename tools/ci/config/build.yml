@@ -38,11 +38,13 @@ build_template_app:
     # Set the variable for 'esp-idf-template' testing
     - ESP_IDF_TEMPLATE_GIT=${ESP_IDF_TEMPLATE_GIT:-"https://github.com/espressif/esp-idf-template.git"}
     - git clone ${ESP_IDF_TEMPLATE_GIT}
+    # Try to use the same branch name for esp-idf-template that we're
+    # using on esp-idf. If it doesn't exist then just stick to the default branch
     - python $CHECKOUT_REF_SCRIPT esp-idf-template esp-idf-template
     - cd esp-idf-template
-    # Try to use the same branch name for esp-idf-template that we're
-    # using on esp-idf. If it doesn't exist then just stick to the default
-    # branch
+    - export PATH="$IDF_PATH/tools:$PATH"
+    - export EXTRA_CFLAGS=${PEDANTIC_CFLAGS}
+    - export EXTRA_CXXFLAGS=${PEDANTIC_CXXFLAGS}
     - make defconfig
     # Test debug build (default)
     - make all V=1
@@ -51,10 +53,17 @@ build_template_app:
     - sed -i.bak -e's/CONFIG_OPTIMIZATION_LEVEL_DEBUG\=y/CONFIG_OPTIMIZATION_LEVEL_RELEASE=y/' sdkconfig
     - make all V=1
     # Check if there are any stray printf/ets_printf references in WiFi libs
-    - cd ../components/esp_wifi/lib_esp32
+    - pushd ../components/esp_wifi/lib_esp32
     - test $(xtensa-esp32-elf-nm *.a | grep -w printf | wc -l) -eq 0
     - test $(xtensa-esp32-elf-nm *.a | grep -w ets_printf | wc -l) -eq 0
-
+    - popd
+    # Repeat the build using CMake
+    - rm -rf build sdkconfig
+    # Debug build
+    - idf.py build
+    # Release build
+    - sed -i.bak -e's/CONFIG_OPTIMIZATION_LEVEL_DEBUG\=y/CONFIG_OPTIMIZATION_LEVEL_RELEASE=y/' sdkconfig
+    - idf.py build
 
 build_ssc:
   extends: .build_template
@@ -81,7 +90,7 @@ build_esp_idf_tests_make:
   extends: .build_esp_idf_unit_test_template
   script:
     - export EXTRA_CFLAGS=${PEDANTIC_CFLAGS}
-    - export EXTRA_CXXFLAGS=${EXTRA_CFLAGS}
+    - export EXTRA_CXXFLAGS=${PEDANTIC_CXXFLAGS}
     - cd $CI_PROJECT_DIR/tools/unit-test-app
     - MAKEFLAGS= make help # make sure kconfig tools are built in single process
     - make ut-clean-all-configs
@@ -97,7 +106,7 @@ build_esp_idf_tests_cmake:
   script:
     - export PATH="$IDF_PATH/tools:$PATH"
     - export EXTRA_CFLAGS=${PEDANTIC_CFLAGS}
-    - export EXTRA_CXXFLAGS=${EXTRA_CFLAGS}
+    - export EXTRA_CXXFLAGS=${PEDANTIC_CXXFLAGS}
     - cd $CI_PROJECT_DIR/tools/unit-test-app
     - idf.py ut-clean-all-configs
     - idf.py ut-build-all-configs
@@ -282,3 +291,82 @@ build_docker:
     # The workaround mentioned there works, but leaves around directories which need to be cleaned up manually.
     # Therefore, build a copy of the example located inside the container.
     - docker run --rm --workdir /opt/esp/idf/examples/get-started/blink ${DOCKER_TMP_IMAGE_NAME} idf.py build
+
+build_idf_exe:
+  stage: build
+  image: $CI_DOCKER_REGISTRY/esp32-toolchain-win-cross
+  tags:
+    - build
+  only:
+    refs:
+      - master
+      - /^release\/v/
+      - /^v\d+\.\d+(\.\d+)?($|-)/
+      - schedules
+  before_script: []
+  artifacts:
+    paths:
+      - tools/windows/idf_exe/build/idf-exe-v*.zip
+    expire_in: 3 days
+  script:
+    - cd tools/windows/idf_exe/
+    - mkdir build
+    - cd build
+    - cmake -DCMAKE_TOOLCHAIN_FILE=../toolchain-i686-w64-mingw32.cmake -DCMAKE_BUILD_TYPE=Release ..
+    - cmake --build .
+
+build_cmdlinerunner:
+  stage: build
+  image: $CI_DOCKER_REGISTRY/esp32-toolchain-win-cross
+  tags:
+    - build
+  only:
+    refs:
+      - master
+      - /^release\/v/
+      - /^v\d+\.\d+(\.\d+)?($|-)/
+      - schedules
+  before_script: []
+  artifacts:
+    paths:
+      - tools/windows/tool_setup/cmdlinerunner/build/cmdlinerunner.dll
+    expire_in: 3 days
+  script:
+    - cd tools/windows/tool_setup/cmdlinerunner
+    - mkdir build
+    - cd build
+    - cmake -DCMAKE_TOOLCHAIN_FILE=../toolchain-i686-w64-mingw32.cmake -DCMAKE_BUILD_TYPE=Release ..
+    - cmake --build .
+
+build_installer:
+  # using a different stage here to be able to use artifacts from build_cmdlinerunner job
+  stage: host_test
+  image: $CI_DOCKER_REGISTRY/wine-innosetup:1
+  tags:
+    - build
+  only:
+    refs:
+      - master
+      - /^release\/v/
+      - /^v\d+\.\d+(\.\d+)?($|-)/
+      - schedules
+  dependencies:
+    - build_cmdlinerunner
+  before_script: []
+  script:
+    - mkdir idf_tools_tmp
+    - export IDF_TOOLS_PATH=$PWD/idf_tools_tmp
+    - tools/idf_tools.py --non-interactive download --platform Windows-x86_64 all
+    - tools/idf_tools.py --tools-json tools/windows/tool_setup/tools_fallback.json --non-interactive download --platform Windows-x86_64 all
+    - mkdir tools/windows/tool_setup/dist
+    - mv idf_tools_tmp/dist/* tools/windows/tool_setup/dist/
+
+    - cd tools/windows/tool_setup/
+    - mkdir unzip
+    - cd unzip
+    - wget --no-verbose https://www.7-zip.org/a/7z1900-extra.7z
+    - 7zr e -y 7z1900-extra.7z
+    - cd ..
+
+    - wget --no-verbose https://dl.espressif.com/dl/esp-idf/idf_versions.txt
+    - iscc idf_tool_setup.iss

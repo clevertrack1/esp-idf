@@ -8,7 +8,6 @@
 #include "esp_transport_tcp.h"
 #include "esp_transport_ws.h"
 #include "esp_transport_utils.h"
-#include "transport_strcasestr.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/sha1.h"
 
@@ -64,7 +63,7 @@ static char *trimwhitespace(const char *str)
 
 static char *get_http_header(const char *buffer, const char *key)
 {
-    char *found = transport_strcasestr(buffer, key);
+    char *found = strcasestr(buffer, key);
     if (found) {
         found += strlen(key);
         char *found_end = strstr(found, "\r\n");
@@ -208,7 +207,17 @@ static int _ws_write(esp_transport_handle_t t, int opcode, int mask_flag, const 
     if (len == 0) {
         return 0;
     }
-    return esp_transport_write(ws->parent, buffer, len, timeout_ms);
+
+    int ret = esp_transport_write(ws->parent, buffer, len, timeout_ms);
+    // in case of masked transport we have to revert back to the original data, as ws layer
+    // does not create its own copy of data to be sent
+    if (mask_flag) {
+        mask = &ws_header[header_len-4];
+        for (i = 0; i < len; ++i) {
+            buffer[i] = (buffer[i] ^ mask[i % 4]);
+        }
+    }    
+    return ret;
 }
 
 static int ws_write(esp_transport_handle_t t, const char *b, int len, int timeout_ms)
