@@ -39,7 +39,7 @@ static ssize_t callback_send_inner(struct sh2lib_handle *hd, const uint8_t *data
 {
     int rv = esp_tls_conn_write(hd->http2_tls, data, length);
     if (rv <= 0) {
-        if (rv == MBEDTLS_ERR_SSL_WANT_READ || rv == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        if (rv == ESP_TLS_ERR_SSL_WANT_READ || rv == ESP_TLS_ERR_SSL_WANT_WRITE) {
             rv = NGHTTP2_ERR_WOULDBLOCK;
         } else {
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -88,7 +88,7 @@ static ssize_t callback_recv(nghttp2_session *session, uint8_t *buf,
     int rv;
     rv = esp_tls_conn_read(hd->http2_tls, (char *)buf, (int)length);
     if (rv < 0) {
-        if (rv == MBEDTLS_ERR_SSL_WANT_READ || rv == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        if (rv == ESP_TLS_ERR_SSL_WANT_READ || rv == ESP_TLS_ERR_SSL_WANT_WRITE) {
             rv = NGHTTP2_ERR_WOULDBLOCK;
         } else {
             rv = NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -235,26 +235,35 @@ static int do_http2_connect(struct sh2lib_handle *hd)
     return 0;
 }
 
-int sh2lib_connect(struct sh2lib_handle *hd, const char *uri)
+int sh2lib_connect(struct sh2lib_config_t *cfg, struct sh2lib_handle *hd)
 {
     memset(hd, 0, sizeof(*hd));
+
+    if (cfg == NULL) {
+        ESP_LOGE(TAG, "[sh2-connect] pointer to sh2lib configurations cannot be NULL");
+        goto error;
+    }
+
     const char *proto[] = {"h2", NULL};
     esp_tls_cfg_t tls_cfg = {
         .alpn_protos = proto,
+        .cacert_buf = cfg->cacert_buf,
+        .cacert_bytes = cfg->cacert_bytes,
         .non_block = true,
-    };    
-    if ((hd->http2_tls = esp_tls_conn_http_new(uri, &tls_cfg)) == NULL) {
+        .timeout_ms = 10 * 1000,
+    };
+    if ((hd->http2_tls = esp_tls_conn_http_new(cfg->uri, &tls_cfg)) == NULL) {
         ESP_LOGE(TAG, "[sh2-connect] esp-tls connection failed");
         goto error;
     }
     struct http_parser_url u;
     http_parser_url_init(&u);
-    http_parser_parse_url(uri, strlen(uri), 0, &u);
-    hd->hostname = strndup(&uri[u.field_data[UF_HOST].off], u.field_data[UF_HOST].len);
+    http_parser_parse_url(cfg->uri, strlen(cfg->uri), 0, &u);
+    hd->hostname = strndup(&cfg->uri[u.field_data[UF_HOST].off], u.field_data[UF_HOST].len);
 
     /* HTTP/2 Connection */
     if (do_http2_connect(hd) != 0) {
-        ESP_LOGE(TAG, "[sh2-connect] HTTP2 Connection failed with %s", uri);
+        ESP_LOGE(TAG, "[sh2-connect] HTTP2 Connection failed with %s", cfg->uri);
         goto error;
     }
 
@@ -366,4 +375,3 @@ int sh2lib_do_put(struct sh2lib_handle *hd, const char *path,
                              };
     return sh2lib_do_putpost_with_nv(hd, nva, sizeof(nva) / sizeof(nva[0]), send_cb, recv_cb);
 }
-

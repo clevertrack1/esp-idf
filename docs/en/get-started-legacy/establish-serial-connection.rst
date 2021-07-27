@@ -3,7 +3,7 @@ Establish Serial Connection with ESP32 (Legacy GNU Make)
 :link_to_translation:`zh_CN:[中文]`
 
 .. include:: ../gnu-make-legacy.rst
-                     
+
 This section provides guidance how to establish serial connection between ESP32 and PC.
 
 
@@ -19,22 +19,22 @@ Below are the links to drivers for ESP32 and other boards produced by Espressif:
     :header: Development Board, USB Driver, Remarks
     :widths: 40, 20, 40
 
-    :ref:`ESP32-DevKitC <esp-modules-and-boards-esp32-devkitc>`,  `CP210x`_
+    ESP32-DevKitC,  `CP210x`_
     `ESP32-LyraT <https://www.espressif.com/en/products/hardware/esp32-lyrat>`_, `CP210x`_
     `ESP32-LyraTD-MSC <https://www.espressif.com/en/products/hardware/esp32-lyratd-msc>`_, `CP210x`_
-    :ref:`ESP32-PICO-KIT <esp-modules-and-boards-esp32-pico-kit>`, `CP210x`_
-    :ref:`ESP-WROVER-KIT <esp-modules-and-boards-esp-wrover-kit>`, `FTDI`_
-    :ref:`ESP32 Demo Board <esp-modules-and-boards-esp32-demo-board>`, `FTDI`_
+    ESP32-PICO-KIT, `CP210x`_
+    ESP-WROVER-KIT, `FTDI`_
+    ESP32 Demo Board, `FTDI`_
     `ESP-Prog`_, `FTDI`_, Programmer board (w/o ESP32)
-    `ESP32-MeshKit-Sense <https://github.com/espressif/esp-iot-solution/blob/master/documents/evaluation_boards/ESP32-MeshKit-Sense_guide_en.md#esp32-meshkit-sense-hardware-design-guidelines>`_, n/a, Use with `ESP-Prog`_
-    `ESP32-Sense Kit <https://github.com/espressif/esp-iot-solution/blob/master/documents/evaluation_boards/esp32_sense_kit_guide_en.md#guide-for-esp32-sense-development-kit>`_, n/a, Use with `ESP-Prog`_
+    `ESP32-MeshKit-Sense <https://github.com/espressif/esp-dev-kits/blob/master/esp32-meshkit-sensor/docs/ESP32-MeshKit-Sense_guide_en.md>`_, n/a, Use with `ESP-Prog`_
+    `ESP32-Sense-Kit <https://github.com/espressif/esp-dev-kits/blob/master/esp32-sense-kit/docs/esp32_sense_kit_guide_en.md>`_, n/a, Use with `ESP-Prog`_
 
 .. _CP210x: https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers
-.. _FTDI: http://www.ftdichip.com/Drivers/VCP.htm 
-.. _ESP-Prog: https://github.com/espressif/esp-iot-solution/blob/master/documents/evaluation_boards/ESP-Prog_guide_en.md#introduction-to-the-esp-prog-board
+.. _FTDI: https://www.ftdichip.com/Drivers/VCP.htm
+.. _ESP-Prog: https://github.com/espressif/esp-dev-kits/blob/master/esp-prog/docs/ESP-Prog_guide_en.md
 
-* CP210x: `CP210x USB to UART Bridge VCP Drivers <https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers>`_ 
-* FTDI: `FTDI Virtual COM Port Drivers <http://www.ftdichip.com/Drivers/VCP.htm>`_
+* CP210x: `CP210x USB to UART Bridge VCP Drivers <https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers>`_
+* FTDI: `FTDI Virtual COM Port Drivers <https://www.ftdichip.com/Drivers/VCP.htm>`_
 
 The drivers above are primarily for reference. Under normal circumstances, the drivers should be bundled with and operating system and automatically installed upon connecting one of the listed boards to the PC.
 
@@ -88,7 +88,7 @@ on Arch Linux this is done by adding the user to ``uucp`` group with the followi
 
     sudo usermod -a -G uucp $USER
 
-Make sure you re-login to enable read and write permissions for the serial port. 
+Make sure you re-login to enable read and write permissions for the serial port.
 
 
 Verify serial connection

@@ -8,6 +8,16 @@ Power save mode only works in station mode. If the modem sleep mode is enabled, 
 
 * Minimum modem sleep: In minimum modem sleep mode, station wakes up every DTIM to receive beacon. Broadcast data will not be lost because it is transmitted after DTIM. However, it can not save much more power if DTIM is short for DTIM is determined by AP.
 
-* Maximum modem sleep: In maximum modem sleep mode, station wakes up every listen interval to receive beacon. Broadcast data may be lost because station may be in sleep state at DTIM time. If listen interval is longer, more power is saved but broadcast data is more easy to lose. 
+* Maximum modem sleep: In maximum modem sleep mode, station wakes up every listen interval to receive beacon. Broadcast data may be lost because station may be in sleep state at DTIM time. If listen interval is longer, more power is saved but broadcast data is more easy to lose.
 
 * others: not supported yet.
+
+### Typical current consumption with management enabled
+
+![current consumption with CONFIG_PM_ENABLE enabled](image/power_save_graph.png)
+
+### Typical current consumption with management disabled
+
+![current consumption with CONFIG_PM_ENABLE disabled](image/power_save_graph_PM_disabled.png)
+
+Note that current consumption and average current are higher when disabled.

@@ -5,13 +5,11 @@
 #include <esp_types.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "esp32/rom/ets_sys.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
-#include "freertos/xtensa_api.h"
 #include "unity.h"
 
 volatile static int done;
@@ -53,4 +51,3 @@ TEST_CASE("Test for per-task non-reentrant tasks", "[freertos]")
     }
     TEST_ASSERT(error == 0);
 }
-

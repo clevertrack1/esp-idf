@@ -19,22 +19,23 @@
 #include <sys/termios.h>
 #include <sys/errno.h>
 #include "unity.h"
-#include "esp32/rom/uart.h"
+#include "esp_rom_uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/uart.h"
+#include "soc/uart_struct.h"
 #include "esp_vfs_dev.h"
 #include "esp_vfs.h"
 #include "sdkconfig.h"
 
 static void fwrite_str_loopback(const char* str, size_t size)
 {
-    uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
+    esp_rom_uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
     UART0.conf0.loopback = 1;
     fwrite(str, 1, size, stdout);
     fflush(stdout);
-    uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
+    esp_rom_uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
     vTaskDelay(2 / portTICK_PERIOD_MS);
     UART0.conf0.loopback = 0;
 }
@@ -42,12 +43,12 @@ static void fwrite_str_loopback(const char* str, size_t size)
 static void flush_stdin_stdout(void)
 {
     vTaskDelay(10 / portTICK_PERIOD_MS);
-    char *bitbucket = (char*) 0x3f000000;
-    while (fread(bitbucket, 1, 128, stdin) > 0) {
+    char bitbucket[UART_FIFO_LEN];
+    while (fread(bitbucket, 1, UART_FIFO_LEN, stdin) > 0) {
         ;
     }
     fflush(stdout);
-    uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
+    esp_rom_uart_tx_wait_idle(CONFIG_ESP_CONSOLE_UART_NUM);
 }
 
 TEST_CASE("can read from stdin", "[vfs]")
@@ -76,8 +77,8 @@ TEST_CASE("can read from stdin", "[vfs]")
 
 TEST_CASE("CRs are removed from the stdin correctly", "[vfs]")
 {
-    esp_vfs_dev_uart_set_rx_line_endings(ESP_LINE_ENDINGS_CRLF);
-    esp_vfs_dev_uart_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+    esp_vfs_dev_uart_port_set_rx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CRLF);
+    esp_vfs_dev_uart_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CRLF);
 
     flush_stdin_stdout();
     const char* send_str = "1234567890\n\r123\r\n4\n";
@@ -97,7 +98,7 @@ TEST_CASE("CRs are removed from the stdin correctly", "[vfs]")
 
     rb = fread(dst, 1, 6, stdin);           // ask for 6
     TEST_ASSERT_EQUAL(6, rb);               // get 6
-    
+
     TEST_ASSERT_EQUAL_UINT8_ARRAY("1234567890\n", buf, 11);
     dst += rb;
 
@@ -116,7 +117,7 @@ TEST_CASE("CRs are removed from the stdin correctly", "[vfs]")
     TEST_ASSERT_EQUAL(2, rb);               // get two characters
     TEST_ASSERT_EQUAL_UINT8_ARRAY("\r1", dst, 2);
     dst += rb;
-    
+
     fwrite_str_loopback(send_str + 13, 6);  // Send the rest
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
@@ -202,6 +203,17 @@ TEST_CASE("can write to UART while another task is reading", "[vfs]")
     vSemaphoreDelete(write_arg.done);
 }
 
+TEST_CASE("fcntl supported in UART VFS", "[vfs]")
+{
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    TEST_ASSERT_NOT_EQUAL(-1, flags);
+    int res = fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    TEST_ASSERT_NOT_EQUAL(-1, res);
+    /* revert */
+    res = fcntl(STDIN_FILENO, F_SETFL, flags);
+    TEST_ASSERT_NOT_EQUAL(-1, res);
+}
+
 #ifdef CONFIG_VFS_SUPPORT_TERMIOS
 TEST_CASE("Can use termios for UART", "[vfs]")
 {
@@ -210,10 +222,11 @@ TEST_CASE("Can use termios for UART", "[vfs]")
         .data_bits = UART_DATA_8_BITS,
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_APB,
     };
-    uart_param_config(UART_NUM_1, &uart_config);
     uart_driver_install(UART_NUM_1, 256, 256, 0, NULL, 0);
+    uart_param_config(UART_NUM_1, &uart_config);
 
     const int uart_fd = open("/dev/uart/1", O_RDWR);
     TEST_ASSERT_NOT_EQUAL_MESSAGE(uart_fd, -1, "Cannot open UART");
@@ -312,14 +325,14 @@ TEST_CASE("Can use termios for UART", "[vfs]")
         TEST_ASSERT_EQUAL(230423, baudrate);
 
         tios.c_cflag |= BOTHER;
-        tios.c_ispeed = tios.c_ospeed = 213;
+        tios.c_ispeed = tios.c_ospeed = 42321;
         TEST_ASSERT_EQUAL(0, tcsetattr(uart_fd, TCSANOW, &tios));
         TEST_ASSERT_EQUAL(0, tcgetattr(uart_fd, &tios_result));
         TEST_ASSERT_EQUAL(BOTHER, tios_result.c_cflag & BOTHER);
-        TEST_ASSERT_EQUAL(213, tios_result.c_ispeed);
-        TEST_ASSERT_EQUAL(213, tios_result.c_ospeed);
+        TEST_ASSERT_EQUAL(42321, tios_result.c_ispeed);
+        TEST_ASSERT_EQUAL(42321, tios_result.c_ospeed);
         TEST_ASSERT_EQUAL(ESP_OK, uart_get_baudrate(UART_NUM_1, &baudrate));
-        TEST_ASSERT_EQUAL(213, baudrate);
+        TEST_ASSERT_EQUAL(42321, baudrate);
 
         memset(&tios_result, 0xFF, sizeof(struct termios));
     }

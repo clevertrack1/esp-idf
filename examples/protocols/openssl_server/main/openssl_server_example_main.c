@@ -1,4 +1,4 @@
-/* OpenSSL server Example
+/* OpenSSL Server Example
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
@@ -19,7 +19,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
-#include "tcpip_adapter.h"
+#include "esp_netif.h"
 #include "nvs_flash.h"
 #include "protocol_examples_common.h"
 
@@ -27,7 +27,7 @@
 #include "lwip/netdb.h"
 
 
-const static char *TAG = "Openssl_example";
+const static char *TAG = "openssl_example";
 
 #define OPENSSL_EXAMPLE_SERVER_ACK "HTTP/1.1 200 OK\r\n" \
                                 "Content-Type: text/html\r\n" \
@@ -56,13 +56,13 @@ static void openssl_example_task(void *p)
     const char send_data[] = OPENSSL_EXAMPLE_SERVER_ACK;
     const int send_bytes = sizeof(send_data);
 
-    extern const unsigned char cacert_pem_start[] asm("_binary_cacert_pem_start");
-    extern const unsigned char cacert_pem_end[]   asm("_binary_cacert_pem_end");
-    const unsigned int cacert_pem_bytes = cacert_pem_end - cacert_pem_start;
+    extern const unsigned char ca_crt_start[] asm("_binary_ca_crt_start");
+    extern const unsigned char ca_crt_end[]   asm("_binary_ca_crt_end");
+    const unsigned int ca_crt_bytes = ca_crt_end - ca_crt_start;
 
-    extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
-    extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
-    const unsigned int prvtkey_pem_bytes = prvtkey_pem_end - prvtkey_pem_start;   
+    extern const unsigned char ca_key_start[] asm("_binary_ca_key_start");
+    extern const unsigned char ca_key_end[]   asm("_binary_ca_key_end");
+    const unsigned int ca_key_bytes = ca_key_end - ca_key_start;
 
     ESP_LOGI(TAG, "SSL server context create ......");
     /* For security reasons, it is best if you can use
@@ -77,7 +77,7 @@ static void openssl_example_task(void *p)
     ESP_LOGI(TAG, "OK");
 
     ESP_LOGI(TAG, "SSL server context set own certification......");
-    ret = SSL_CTX_use_certificate_ASN1(ctx, cacert_pem_bytes, cacert_pem_start);
+    ret = SSL_CTX_use_certificate_ASN1(ctx, ca_crt_bytes, ca_crt_start);
     if (!ret) {
         ESP_LOGI(TAG, "failed");
         goto failed2;
@@ -85,7 +85,7 @@ static void openssl_example_task(void *p)
     ESP_LOGI(TAG, "OK");
 
     ESP_LOGI(TAG, "SSL server context set private key......");
-    ret = SSL_CTX_use_PrivateKey_ASN1(0, ctx, prvtkey_pem_start, prvtkey_pem_bytes);
+    ret = SSL_CTX_use_PrivateKey_ASN1(0, ctx, ca_key_start, ca_key_bytes);
     if (!ret) {
         ESP_LOGI(TAG, "failed");
         goto failed2;
@@ -112,7 +112,7 @@ static void openssl_example_task(void *p)
     }
     ESP_LOGI(TAG, "OK");
 
-    ESP_LOGI(TAG, "SSL server socket listen ......");
+    ESP_LOGI(TAG, "SSL server socket listen on %d port", OPENSSL_EXAMPLE_LOCAL_TCP_PORT);
     ret = listen(sockfd, 32);
     if (ret) {
         ESP_LOGI(TAG, "failed");
@@ -168,7 +168,7 @@ reconnect:
             break;
         }
     } while (1);
-    
+
     SSL_shutdown(ssl);
 failed5:
     close(new_sockfd);
@@ -186,7 +186,7 @@ failed2:
 failed1:
     vTaskDelete(NULL);
     return ;
-} 
+}
 
 static void openssl_server_init(void)
 {
@@ -198,7 +198,7 @@ static void openssl_server_init(void)
                       OPENSSL_EXAMPLE_TASK_STACK_WORDS,
                       NULL,
                       OPENSSL_EXAMPLE_TASK_PRIORITY,
-                      &openssl_handle); 
+                      &openssl_handle);
 
     if (ret != pdPASS)  {
         ESP_LOGI(TAG, "create task %s failed", OPENSSL_EXAMPLE_TASK_NAME);
@@ -207,8 +207,12 @@ static void openssl_server_init(void)
 
 void app_main(void)
 {
+    ESP_LOGI(TAG, "[APP] Startup..");
+    ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
+
     ESP_ERROR_CHECK(nvs_flash_init());
-    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.

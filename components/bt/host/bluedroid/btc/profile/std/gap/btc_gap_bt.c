@@ -639,7 +639,7 @@ static void btc_gap_bt_read_rssi_delta_cmpl_callback(void *p_data)
 
 static void btc_gap_bt_read_rssi_delta(btc_gap_bt_args_t *arg)
 {
-    BTA_DmBleReadRSSI(arg->read_rssi_delta.bda.address, BTA_TRANSPORT_BR_EDR, btc_gap_bt_read_rssi_delta_cmpl_callback);
+    BTA_DmReadRSSI(arg->read_rssi_delta.bda.address, BTA_TRANSPORT_BR_EDR, btc_gap_bt_read_rssi_delta_cmpl_callback);
 }
 
 static esp_err_t btc_gap_bt_remove_bond_device(btc_gap_bt_args_t *arg)
@@ -708,6 +708,86 @@ static void btc_gap_bt_config_eir(btc_gap_bt_args_t *arg)
     BTA_DmConfigEir(&eir_config);
 }
 
+static void btc_gap_bt_set_afh_channels_cmpl_callback(void *p_data)
+{
+    tBTA_SET_AFH_CHANNELS_RESULTS *result = (tBTA_SET_AFH_CHANNELS_RESULTS *)p_data;
+    esp_bt_gap_cb_param_t param;
+    bt_status_t ret;
+    btc_msg_t msg;
+    msg.sig = BTC_SIG_API_CB;
+    msg.pid = BTC_PID_GAP_BT;
+    msg.act = BTC_GAP_BT_SET_AFH_CHANNELS_EVT;
+
+    param.set_afh_channels.stat = btc_btm_status_to_esp_status(result->status);
+
+    ret = btc_transfer_context(&msg, &param,
+                               sizeof(esp_bt_gap_cb_param_t), NULL);
+
+    if (ret != BT_STATUS_SUCCESS) {
+        BTC_TRACE_ERROR("%s btc_transfer_context failed\n", __func__);
+    }
+}
+
+static void btc_gap_bt_set_afh_channels(btc_gap_bt_args_t *arg)
+{
+    BTA_DmSetAfhChannels(arg->set_afh_channels.channels, btc_gap_bt_set_afh_channels_cmpl_callback);
+}
+
+static void btc_gap_bt_read_remote_name_cmpl_callback(void *p_data)
+{
+    tBTA_REMOTE_DEV_NAME *result = (tBTA_REMOTE_DEV_NAME *)p_data;
+    esp_bt_gap_cb_param_t param;
+    btc_msg_t msg;
+    bt_status_t ret;
+    msg.sig = BTC_SIG_API_CB;
+    msg.pid = BTC_PID_GAP_BT;
+    msg.act = BTC_GAP_BT_READ_REMOTE_NAME_EVT;
+
+    param.read_rmt_name.stat = btc_btm_status_to_esp_status(result->status);
+    memcpy(param.read_rmt_name.rmt_name,result->remote_bd_name,ESP_BT_GAP_MAX_BDNAME_LEN);
+
+    ret = btc_transfer_context(&msg, &param, sizeof(esp_bt_gap_cb_param_t), NULL);
+    if (ret != BT_STATUS_SUCCESS) {
+        BTC_TRACE_ERROR("%s btc_transfer_context failed\n", __func__);
+    }
+}
+
+static void btc_gap_bt_read_remote_name(btc_gap_bt_args_t *arg)
+{
+    BTA_DmGetRemoteName(arg->rmt_name_bda.address, btc_gap_bt_read_remote_name_cmpl_callback);
+}
+
+#if (BTA_DM_QOS_INCLUDED == TRUE)
+static void btc_gap_bt_set_qos_cmpl_callback(void *p_data)
+{
+    tBTM_QOS_SETUP_CMPL *result = (tBTM_QOS_SETUP_CMPL *)p_data;
+    esp_bt_gap_cb_param_t param;
+    btc_msg_t msg;
+    bt_status_t ret;
+    msg.sig = BTC_SIG_API_CB;
+    msg.pid = BTC_PID_GAP_BT;
+    msg.act = BTC_GAP_BT_QOS_EVT;
+
+    param.qos_cmpl.stat = btc_btm_status_to_esp_status(result->status);
+    param.qos_cmpl.t_poll = result->flow.latency / 625;
+    memcpy(param.qos_cmpl.bda,result->rem_bda,BD_ADDR_LEN);
+
+    ret = btc_transfer_context(&msg, &param, sizeof(esp_bt_gap_cb_param_t), NULL);
+    if (ret != BT_STATUS_SUCCESS) {
+        BTC_TRACE_ERROR("%s btc_transfer_context failed\n", __func__);
+    }
+}
+#endif /// (BTA_DM_QOS_INCLUDED == TRUE)
+
+static void btc_gap_bt_set_qos(btc_gap_bt_args_t *arg)
+{
+#if (BTA_DM_QOS_INCLUDED == TRUE)
+    BTA_DmSetQos(arg->set_qos.bda.address, arg->set_qos.t_poll, btc_gap_bt_set_qos_cmpl_callback);
+#else
+    BTC_TRACE_ERROR("%s: QoS is not supported.\n",__func__);
+#endif /// (BTA_DM_QOS_INCLUDED == TRUE)
+}
+
 void btc_gap_bt_arg_deep_copy(btc_msg_t *msg, void *p_dest, void *p_src)
 {
     switch (msg->act) {
@@ -721,6 +801,9 @@ void btc_gap_bt_arg_deep_copy(btc_msg_t *msg, void *p_dest, void *p_src)
     case BTC_GAP_BT_ACT_REMOVE_BOND_DEVICE:
     case BTC_GAP_BT_ACT_PIN_REPLY:
     case BTC_GAP_BT_ACT_SET_PIN_TYPE:
+    case BTC_GAP_BT_ACT_SET_AFH_CHANNELS:
+    case BTC_GAP_BT_ACT_READ_REMOTE_NAME:
+    case BTC_GAP_BT_ACT_SET_QOS:
         break;
 #if (BT_SSP_INCLUDED == TRUE)
     case BTC_GAP_BT_ACT_PASSKEY_REPLY:
@@ -784,6 +867,9 @@ void btc_gap_bt_arg_deep_free(btc_msg_t *msg)
     case BTC_GAP_BT_ACT_REMOVE_BOND_DEVICE:
     case BTC_GAP_BT_ACT_PIN_REPLY:
     case BTC_GAP_BT_ACT_SET_PIN_TYPE:
+    case BTC_GAP_BT_ACT_SET_AFH_CHANNELS:
+    case BTC_GAP_BT_ACT_READ_REMOTE_NAME:
+    case BTC_GAP_BT_ACT_SET_QOS:
         break;
 #if (BT_SSP_INCLUDED == TRUE)
     case BTC_GAP_BT_ACT_PASSKEY_REPLY:
@@ -873,6 +959,19 @@ void btc_gap_bt_call_handler(btc_msg_t *msg)
         btc_gap_bt_config_eir(arg);
         break;
     }
+
+    case BTC_GAP_BT_ACT_SET_AFH_CHANNELS: {
+        btc_gap_bt_set_afh_channels(arg);
+        break;
+    }
+    case BTC_GAP_BT_ACT_READ_REMOTE_NAME: {
+        btc_gap_bt_read_remote_name(arg);
+        break;
+    }
+    case BTC_GAP_BT_ACT_SET_QOS: {
+        btc_gap_bt_set_qos(arg);
+        break;
+    }
     default:
         break;
     }
@@ -888,10 +987,13 @@ void btc_gap_bt_busy_level_updated(uint8_t bl_flags)
         param.disc_st_chg.state = ESP_BT_GAP_DISCOVERY_STARTED;
         btc_gap_bt_cb_to_app(ESP_BT_GAP_DISC_STATE_CHANGED_EVT, &param);
         btc_gap_bt_inquiry_in_progress = true;
-    } else if (bl_flags == BTM_BL_INQUIRY_CANCELLED ||
-               bl_flags == BTM_BL_INQUIRY_COMPLETE) {
+    } else if (bl_flags == BTM_BL_INQUIRY_CANCELLED) {
         param.disc_st_chg.state = ESP_BT_GAP_DISCOVERY_STOPPED;
         btc_gap_bt_cb_to_app(ESP_BT_GAP_DISC_STATE_CHANGED_EVT, &param);
+        btc_gap_bt_inquiry_in_progress = false;
+    } else if (bl_flags == BTM_BL_INQUIRY_COMPLETE) {
+        /* The Inquiry Complete event is not transported to app layer,
+        since the app only cares about the Name Discovery Complete event */
         btc_gap_bt_inquiry_in_progress = false;
     }
 }
@@ -908,11 +1010,18 @@ void btc_gap_bt_cb_deep_free(btc_msg_t *msg)
     case BTC_GAP_BT_CONFIG_EIR_DATA_EVT:
     case BTC_GAP_BT_AUTH_CMPL_EVT:
     case BTC_GAP_BT_PIN_REQ_EVT:
+    case BTC_GAP_BT_SET_AFH_CHANNELS_EVT:
+    case BTC_GAP_BT_READ_REMOTE_NAME_EVT:
+    case BTC_GAP_BT_REMOVE_BOND_DEV_COMPLETE_EVT:
+    case BTC_GAP_BT_QOS_EVT:
 #if (BT_SSP_INCLUDED == TRUE)
     case BTC_GAP_BT_CFM_REQ_EVT:
     case BTC_GAP_BT_KEY_NOTIF_EVT:
     case BTC_GAP_BT_KEY_REQ_EVT:
 #endif ///BT_SSP_INCLUDED == TRUE
+#if (BTC_DM_PM_INCLUDED == TRUE)
+    case BTC_GAP_BT_MODE_CHG_EVT:
+#endif /// BTC_DM_PM_INCLUDED == TRUE
         break;
     default:
         BTC_TRACE_ERROR("%s: Unhandled event (%d)!\n", __FUNCTION__, msg->act);
@@ -965,6 +1074,31 @@ void btc_gap_bt_cb_handler(btc_msg_t *msg)
         break;
     }
 #endif ///BT_SSP_INCLUDED == TRUE
+    case BTC_GAP_BT_SET_AFH_CHANNELS_EVT:{
+        btc_gap_bt_cb_to_app(ESP_BT_GAP_SET_AFH_CHANNELS_EVT, (esp_bt_gap_cb_param_t *)msg->arg);
+        break;
+    }
+#if (SDP_INCLUDED == TRUE)
+    case BTC_GAP_BT_READ_REMOTE_NAME_EVT:{
+        btc_gap_bt_cb_to_app(ESP_BT_GAP_READ_REMOTE_NAME_EVT,(esp_bt_gap_cb_param_t *)msg->arg);
+        break;
+    }
+#endif
+
+#if (BTC_DM_PM_INCLUDED == TRUE)
+    case BTC_GAP_BT_MODE_CHG_EVT:
+        btc_gap_bt_cb_to_app(ESP_BT_GAP_MODE_CHG_EVT,(esp_bt_gap_cb_param_t *)msg->arg);
+        break;
+#endif /// BTC_DM_PM_INCLUDED == TRUE
+    case BTC_GAP_BT_REMOVE_BOND_DEV_COMPLETE_EVT:{
+        btc_gap_bt_cb_to_app(ESP_BT_GAP_REMOVE_BOND_DEV_COMPLETE_EVT,(esp_bt_gap_cb_param_t *)msg->arg);
+        break;
+    }
+
+    case BTC_GAP_BT_QOS_EVT:{
+        btc_gap_bt_cb_to_app(ESP_BT_GAP_QOS_CMPL_EVT, (esp_bt_gap_cb_param_t *)msg->arg);
+        break;
+    }
     default:
         BTC_TRACE_ERROR("%s: Unhandled event (%d)!\n", __FUNCTION__, msg->act);
         break;

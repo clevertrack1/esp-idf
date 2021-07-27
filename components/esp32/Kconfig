@@ -1,4 +1,13 @@
 menu "ESP32-specific"
+    # TODO: this component simply shouldn't be included
+    # in the build at the CMake level, but this is currently
+    # not working so we just hide all items here
+    visible if IDF_TARGET_ESP32
+
+    config ESP32_ECO3_CACHE_LOCK_FIX
+        bool
+        default y
+        depends on !FREERTOS_UNICORE && ESP32_SPIRAM_SUPPORT
 
     choice ESP32_REV_MIN
         prompt "Minimum Supported ESP32 Revision"
@@ -15,6 +24,7 @@ menu "ESP32-specific"
             bool "Rev 2"
         config ESP32_REV_MIN_3
             bool "Rev 3"
+            select ESP_INT_WDT if ESP32_ECO3_CACHE_LOCK_FIX
     endchoice
 
     config ESP32_REV_MIN
@@ -30,10 +40,14 @@ menu "ESP32-specific"
 
     choice ESP32_DEFAULT_CPU_FREQ_MHZ
         prompt "CPU frequency"
+        default ESP32_DEFAULT_CPU_FREQ_40 if IDF_ENV_FPGA
         default ESP32_DEFAULT_CPU_FREQ_160
         help
             CPU frequency to be set on application startup.
 
+        config ESP32_DEFAULT_CPU_FREQ_40
+            bool "40 MHz"
+            depends on IDF_ENV_FPGA
         config ESP32_DEFAULT_CPU_FREQ_80
             bool "80 MHz"
         config ESP32_DEFAULT_CPU_FREQ_160
@@ -44,13 +58,17 @@ menu "ESP32-specific"
 
     config ESP32_DEFAULT_CPU_FREQ_MHZ
         int
+        default 40 if ESP32_DEFAULT_CPU_FREQ_40
         default 80 if ESP32_DEFAULT_CPU_FREQ_80
         default 160 if ESP32_DEFAULT_CPU_FREQ_160
         default 240 if ESP32_DEFAULT_CPU_FREQ_240
 
+        # Note: to support SPIRAM across multiple chips, check CONFIG_SPIRAM
+        # instead
     config ESP32_SPIRAM_SUPPORT
         bool "Support for external, SPI-connected RAM"
         default "n"
+        select SPIRAM
         help
             This enables support for an external SPI RAM chip, connected in parallel with the
             main SPI flash chip.
@@ -58,47 +76,15 @@ menu "ESP32-specific"
     menu "SPI RAM config"
         depends on ESP32_SPIRAM_SUPPORT
 
-        config SPIRAM_BOOT_INIT
-            bool "Initialize SPI RAM when booting the ESP32"
-            default "y"
-            help
-                If this is enabled, the SPI RAM will be enabled during initial boot. Unless you
-                have specific requirements, you'll want to leave this enabled so memory allocated
-                during boot-up can also be placed in SPI RAM.
-
-        config SPIRAM_IGNORE_NOTFOUND
-            bool "Ignore PSRAM when not found"
-            default "n"
-            depends on SPIRAM_BOOT_INIT && !SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
-            help
-                Normally, if psram initialization is enabled during compile time but not found at runtime, it
-                is seen as an error making the ESP32 panic. If this is enabled, the ESP32 will keep on
-                running but will not add the (non-existing) RAM to any allocator.
-
-        choice SPIRAM_USE
-            prompt "SPI RAM access method"
-            default SPIRAM_USE_MALLOC
-            help
-                The SPI RAM can be accessed in multiple methods: by just having it available as an unmanaged
-                memory region in the ESP32 memory map, by integrating it in the ESP32s heap as 'special' memory
-                needing heap_caps_malloc to allocate, or by fully integrating it making malloc() also able to
-                return SPI RAM pointers.
-
-            config SPIRAM_USE_MEMMAP
-                bool "Integrate RAM into ESP32 memory map"
-            config SPIRAM_USE_CAPS_ALLOC
-                bool "Make RAM allocatable using heap_caps_malloc(..., MALLOC_CAP_SPIRAM)"
-            config SPIRAM_USE_MALLOC
-                bool "Make RAM allocatable using malloc() as well"
-                select FREERTOS_SUPPORT_STATIC_ALLOCATION
-        endchoice
-
         choice SPIRAM_TYPE
             prompt "Type of SPI RAM chip in use"
             default SPIRAM_TYPE_AUTO
 
             config SPIRAM_TYPE_AUTO
                 bool "Auto-detect"
+
+            config SPIRAM_TYPE_ESPPSRAM16
+                bool "ESP-PSRAM16 or APS1604"
 
             config SPIRAM_TYPE_ESPPSRAM32
                 bool "ESP-PSRAM32 or IS25WP032"
@@ -111,13 +97,14 @@ menu "ESP32-specific"
         config SPIRAM_SIZE
             int
             default -1 if SPIRAM_TYPE_AUTO
+            default 2097152 if SPIRAM_TYPE_ESPPSRAM16
             default 4194304 if SPIRAM_TYPE_ESPPSRAM32
             default 8388608 if SPIRAM_TYPE_ESPPSRAM64
             default 0
 
         choice SPIRAM_SPEED
             prompt "Set RAM clock speed"
-            default SPIRAM_CACHE_SPEED_40M
+            default SPIRAM_SPEED_40M
             help
                 Select the speed for the SPI RAM chip.
                 If SPI RAM is enabled, we only support three combinations of SPI speed mode we supported now:
@@ -139,17 +126,12 @@ menu "ESP32-specific"
                 bool "80MHz clock speed"
         endchoice
 
-        config SPIRAM_MEMTEST
-            bool "Run memory test on SPI RAM initialization"
-            default "y"
-            depends on SPIRAM_BOOT_INIT
-            help
-                Runs a rudimentary memory test on initialization. Aborts when memory test fails. Disable this for
-                slightly faster startop.
+        # insert non-chip-specific items here
+        source "$IDF_PATH/components/esp_hw_support/Kconfig.spiram.common"
 
         config SPIRAM_CACHE_WORKAROUND
             bool "Enable workaround for bug in SPI RAM cache for Rev1 ESP32s"
-            depends on SPIRAM_USE_MEMMAP || SPIRAM_USE_CAPS_ALLOC || SPIRAM_USE_MALLOC
+            depends on (SPIRAM_USE_MEMMAP || SPIRAM_USE_CAPS_ALLOC || SPIRAM_USE_MALLOC) && (ESP32_REV_MIN < 3)
             default "y"
             help
                 Revision 1 of the ESP32 has a bug that can cause a write to PSRAM not to take place in some situations
@@ -159,6 +141,163 @@ menu "ESP32-specific"
 
                 This will also not use any bits of newlib that are located in ROM, opting for a version that is
                 compiled with the workaround and located in flash instead.
+
+                The workaround is not required for ESP32 revision 3 and above.
+
+        menu "SPIRAM cache workaround debugging"
+
+            choice SPIRAM_CACHE_WORKAROUND_STRATEGY
+                prompt "Workaround strategy"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default SPIRAM_CACHE_WORKAROUND_STRATEGY_MEMW
+                help
+                    Select the workaround strategy. Note that the strategy for precompiled
+                    libraries (libgcc, newlib, bt, wifi) is not affected by this selection.
+
+                    Unless you know you need a different strategy, it's suggested you stay
+                    with the default MEMW strategy. Note that DUPLDST can interfere with hardware
+                    encryption and this will be automatically disabled if this workaround is selected.
+                    'Insert nops' is the workaround that was used in older esp-idf versions. This workaround
+                    still can cause faulty data transfers from/to SPI RAM in some situation.
+
+                config SPIRAM_CACHE_WORKAROUND_STRATEGY_MEMW
+                    bool "Insert memw after vulnerable instructions (default)"
+
+                config SPIRAM_CACHE_WORKAROUND_STRATEGY_DUPLDST
+                    bool "Duplicate LD/ST for 32-bit, memw for 8/16 bit"
+
+                config SPIRAM_CACHE_WORKAROUND_STRATEGY_NOPS
+                    bool "Insert nops between vulnerable loads/stores (old strategy, obsolete)"
+            endchoice
+
+            #This needs to be Y only for the dupldst workaround
+            config SPIRAM_WORKAROUND_NEED_VOLATILE_SPINLOCK
+                bool
+                default "y" if SPIRAM_CACHE_WORKAROUND_STRATEGY_DUPLDST
+        endmenu
+
+        menu "SPIRAM workaround libraries placement"
+            visible if SPIRAM_CACHE_WORKAROUND
+
+            config SPIRAM_CACHE_LIBJMP_IN_IRAM
+                bool "Put libc's jump related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: longjmp and setjmp.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBMATH_IN_IRAM
+                bool "Put libc's math related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: abs, div, labs, ldiv, quorem, fpclassify,
+                    and nan.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBNUMPARSER_IN_IRAM
+                bool "Put libc's number parsing related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: utoa, itoa, atoi, atol, strtol, and strtoul.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBIO_IN_IRAM
+                bool "Put libc's I/O related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: wcrtomb, fvwrite, wbuf, wsetup, fputwc, wctomb_r,
+                    ungetc, makebuf, fflush, refill, and sccl.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBTIME_IN_IRAM
+                bool "Put libc's time related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: asctime, asctime_r, ctime, ctime_r, lcltime, lcltime_r,
+                    gmtime, gmtime_r, strftime, mktime, tzset_r, tzset, time, gettzinfo, systimes, month_lengths,
+                    timelocal, tzvars, tzlock, tzcalc_limits, and strptime.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBCHAR_IN_IRAM
+                bool "Put libc's characters related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: ctype_, toupper, tolower, toascii, strupr, bzero,
+                    isalnum, isalpha, isascii, isblank, iscntrl, isdigit, isgraph, islower, isprint, ispunct,
+                    isspace, and isupper.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBMEM_IN_IRAM
+                bool "Put libc's memory related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: memccpy, memchr memmove, and memrchr.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBSTR_IN_IRAM
+                bool "Put libc's string related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: strcasecmp, strcasestr, strchr, strcoll,
+                    strcpy, strcspn, strdup, strdup_r, strlcat, strlcpy, strlen, strlwr, strncasecmp,
+                    strncat, strncmp, strncpy, strndup, strndup_r, strrchr, strsep, strspn, strstr,
+                    strtok_r, and strupr.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBRAND_IN_IRAM
+                bool "Put libc's random related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: srand, rand, and rand_r.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBENV_IN_IRAM
+                bool "Put libc's environment related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: environ, envlock, and getenv_r.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBFILE_IN_IRAM
+                bool "Put libc's file related functions in IRAM"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: lock, isatty, fclose, open, close, creat, read,
+                    rshift, sbrk, stdio, syssbrk, sysclose, sysopen, creat, sysread, syswrite, impure, fwalk,
+                    and findfp.
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+
+            config SPIRAM_CACHE_LIBMISC_IN_IRAM
+                bool "Put libc's miscellaneous functions in IRAM, see help"
+                depends on SPIRAM_CACHE_WORKAROUND
+                default "y"
+                help
+                    The functions affected by this option are: raise and system
+                    Putting these function in IRAM will allow them to be called when flash cache is disabled
+                    but it will also reduce the available size of free IRAM for the user application.
+        endmenu
 
         config SPIRAM_BANKSWITCH_ENABLE
             bool "Enable bank switching for >4MiB external RAM"
@@ -172,6 +311,9 @@ menu "ESP32-specific"
                 #Note that this is limited to 62 banks, as esp_spiram_writeback_cache needs some kind of mapping of
                 #some banks below that mark to work. We cannot at this moment guarantee this to exist when himem is
                 #enabled.
+
+                If spiram 2T mode is enabled, the size of 64Mbit psram will be changed as 32Mbit, so himem will be
+                unusable.
         config SPIRAM_BANKSWITCH_RESERVE
             int "Amount of 32K pages to reserve for bank switching"
             depends on SPIRAM_BANKSWITCH_ENABLE
@@ -185,47 +327,6 @@ menu "ESP32-specific"
                 any himem calls, the reservation is not done and the original amount of memory will be available
                 to malloc/esp_heap_alloc_caps.
 
-        config SPIRAM_MALLOC_ALWAYSINTERNAL
-            int "Maximum malloc() size, in bytes, to always put in internal memory"
-            depends on SPIRAM_USE_MALLOC
-            default 16384
-            range 0 131072
-            help
-                If malloc() is capable of also allocating SPI-connected ram, its allocation strategy will prefer to
-                allocate chunks less than this size in internal memory, while allocations larger than this will be
-                done from external RAM. If allocation from the preferred region fails, an attempt is made to allocate
-                from the non-preferred region instead, so malloc() will not suddenly fail when either internal or
-                external memory is full.
-
-        config SPIRAM_TRY_ALLOCATE_WIFI_LWIP
-            bool "Try to allocate memories of WiFi and LWIP in SPIRAM firstly. If failed, allocate internal memory"
-            depends on SPIRAM_USE_CAPS_ALLOC || SPIRAM_USE_MALLOC
-            default "n"
-            help
-                Try to allocate memories of WiFi and LWIP in SPIRAM firstly. If failed, try to allocate internal
-                memory then.
-
-        config SPIRAM_MALLOC_RESERVE_INTERNAL
-            int "Reserve this amount of bytes for data that specifically needs to be in DMA or internal memory"
-            depends on SPIRAM_USE_MALLOC
-            default 32768
-            range 0 262144
-            help
-                Because the external/internal RAM allocation strategy is not always perfect, it sometimes may happen
-                that the internal memory is entirely filled up. This causes allocations that are specifically done in
-                internal memory, for example the stack for new tasks or memory to service DMA or have memory that's
-                also available when SPI cache is down, to fail. This option reserves a pool specifically for requests
-                like that; the memory in this pool is not given out when a normal malloc() is called.
-
-                Set this to 0 to disable this feature.
-
-                Note that because FreeRTOS stacks are forced to internal memory, they will also use this memory pool;
-                be sure to keep this in mind when adjusting this value.
-
-                Note also that the DMA reserved pool may not be one single contiguous memory region, depending on the
-                configured size and the static memory usage of the app.
-
-
         config SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
             bool "Allow external memory as an argument to xTaskCreateStatic"
             default n
@@ -233,19 +334,11 @@ menu "ESP32-specific"
             help
                 Because some bits of the ESP32 code environment cannot be recompiled with the cache workaround,
                 normally tasks cannot be safely run with their stack residing in external memory; for this reason
-                xTaskCreate and friends always allocate stack in internal memory and xTaskCreateStatic will check if
-                the memory passed to it is in internal memory. If you have a task that needs a large amount of stack
-                and does not call on ROM code in any way (no direct calls, but also no Bluetooth/WiFi), you can try to
-                disable this and use xTaskCreateStatic to create the tasks stack in external memory.
-
-        config SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
-            bool "Allow .bss segment placed in external memory"
-            default n
-            depends on ESP32_SPIRAM_SUPPORT
-            help
-                If enabled the option,and add EXT_RAM_ATTR defined your variable,then your variable will be placed in
-                PSRAM instead of internal memory, and placed most of variables of lwip,net802.11,pp,bluedroid library
-                to external memory defaultly.
+                xTaskCreate (and related task creaton functions) always allocate stack in internal memory and
+                xTaskCreateStatic will check if the memory passed to it is in internal memory. If you have a task that
+                needs a large amount of stack and does not call on ROM code in any way (no direct calls, but also no
+                Bluetooth/WiFi), you can try enable this to cause xTaskCreateStatic to allow tasks stack in external
+                memory.
 
         choice SPIRAM_OCCUPY_SPI_HOST
             prompt "SPI host to use for 32MBit PSRAM"
@@ -259,6 +352,9 @@ menu "ESP32-specific"
                 bool "HSPI host (SPI2)"
             config SPIRAM_OCCUPY_VSPI_HOST
                 bool "VSPI host (SPI3)"
+            config SPIRAM_OCCUPY_NO_HOST
+                bool "Will not try to use any host, will abort if not able to use the PSRAM"
+
         endchoice
 
         menu "PSRAM clock and cs IO for ESP32-DOWD"
@@ -320,23 +416,51 @@ menu "ESP32-specific"
 
         endmenu
 
+        config SPIRAM_CUSTOM_SPIWP_SD3_PIN
+            bool "Use custom SPI PSRAM WP(SD3) Pin when flash pins set in eFuse (read help)"
+            depends on IDF_TARGET_ESP32 && (ESPTOOLPY_FLASHMODE_DIO || ESPTOOLPY_FLASHMODE_DOUT)
+            default y if SPIRAM_SPIWP_SD3_PIN != 7  # backwards compatibility, can remove in IDF 5
+            default n
+            help
+                This setting is only used if the SPI flash pins have been overridden by setting the eFuses
+                SPI_PAD_CONFIG_xxx, and the SPI flash mode is DIO or DOUT.
+
+                When this is the case, the eFuse config only defines 3 of the 4 Quad I/O data pins. The WP pin (aka
+                ESP32 pin "SD_DATA_3" or SPI flash pin "IO2") is not specified in eFuse. The psram only has QPI
+                mode, so a WP pin setting is necessary.
+
+                If this config item is set to N (default), the correct WP pin will be automatically used for any
+                Espressif chip or module with integrated flash. If a custom setting is needed, set this config item
+                to Y and specify the GPIO number connected to the WP pin.
+
+                When flash mode is set to QIO or QOUT, the PSRAM WP pin will be set the same as the SPI Flash WP pin
+                configured in the bootloader.
+
         config SPIRAM_SPIWP_SD3_PIN
-            int "SPI PSRAM WP(SD3) Pin when customising pins via eFuse (read help)"
-            depends on ESPTOOLPY_FLASHMODE_DIO || ESPTOOLPY_FLASHMODE_DOUT
+            int "Custom SPI PSRAM WP(SD3) Pin"
+            depends on IDF_TARGET_ESP32 && (ESPTOOLPY_FLASHMODE_DIO || ESPTOOLPY_FLASHMODE_DOUT)
+            #depends on SPIRAM_CUSTOM_SPIWP_SD3_PIN  # backwards compatibility, can uncomment in IDF 5
             range 0 33
             default 7
             help
-                This value is ignored unless flash mode is set to DIO or DOUT and the SPI flash pins have been
-                overriden by setting the eFuses SPI_PAD_CONFIG_xxx.
+                The option "Use custom SPI PSRAM WP(SD3) pin" must be set or this value is ignored
 
-                When this is the case, the eFuse config only defines 3 of the 4 Quad I/O data pins. The WP pin (aka
-                ESP32 pin "SD_DATA_3" or SPI flash pin "IO2") is not specified in eFuse. And the psram only has QPI
-                mode, the WP pin is necessary, so we need to configure this value here.
+                If burning a customized set of SPI flash pins in eFuse and using DIO or DOUT mode for flash, set this
+                value to the GPIO number of the SPIRAM WP pin.
 
-                When flash mode is set to QIO or QOUT, the PSRAM WP pin will be set as the value configured in
-                bootloader.
+        config SPIRAM_2T_MODE
+            bool "Enable SPI PSRAM 2T mode"
+            depends on ESP32_SPIRAM_SUPPORT
+            default "n"
+            help
+                Enable this option to fix single bit errors inside 64Mbit PSRAM.
 
-                For ESP32-PICO chip, the default value of this config should be 7.
+                Some 64Mbit PSRAM chips have a hardware issue in the RAM which causes bit errors at multiple
+                fixed bit positions.
+
+                Note: If this option is enabled, the 64Mbit PSRAM chip will appear to be 32Mbit in size.
+                Applications will not be affected unless the use the esp_himem APIs, which are not supported
+                in 2T mode.
 
     endmenu # "SPI RAM config"
 
@@ -376,35 +500,6 @@ menu "ESP32-specific"
         default 0x4000 if ESP32_MEMMAP_TRACEMEM && !ESP32_MEMMAP_TRACEMEM_TWOBANKS
         default 0x0
 
-    choice ESP32_UNIVERSAL_MAC_ADDRESSES
-        bool "Number of universally administered (by IEEE) MAC address"
-        default ESP32_UNIVERSAL_MAC_ADDRESSES_FOUR
-        help
-            Configure the number of universally administered (by IEEE) MAC addresses.
-            During initialisation, MAC addresses for each network interface are generated or derived from a
-            single base MAC address.
-            If the number of universal MAC addresses is four, all four interfaces (WiFi station, WiFi softap,
-            Bluetooth and Ethernet) receive a universally administered MAC address. These are generated
-            sequentially by adding 0, 1, 2 and 3 (respectively) to the final octet of the base MAC address.
-            If the number of universal MAC addresses is two, only two interfaces (WiFi station and Bluetooth)
-            receive a universally administered MAC address. These are generated sequentially by adding 0
-            and 1 (respectively) to the base MAC address. The remaining two interfaces (WiFi softap and Ethernet)
-            receive local MAC addresses. These are derived from the universal WiFi station and Bluetooth MAC
-            addresses, respectively.
-            When using the default (Espressif-assigned) base MAC address, either setting can be used. When using
-            a custom universal MAC address range, the correct setting will depend on the allocation of MAC
-            addresses in this range (either 2 or 4 per device.)
-
-        config ESP32_UNIVERSAL_MAC_ADDRESSES_TWO
-            bool "Two"
-        config ESP32_UNIVERSAL_MAC_ADDRESSES_FOUR
-            bool "Four"
-    endchoice
-
-    config ESP32_UNIVERSAL_MAC_ADDRESSES
-        int
-        default 2 if ESP32_UNIVERSAL_MAC_ADDRESSES_TWO
-        default 4 if ESP32_UNIVERSAL_MAC_ADDRESSES_FOUR
 
 
     config ESP32_ULP_COPROC_ENABLED
@@ -419,7 +514,7 @@ menu "ESP32-specific"
         int
         prompt "RTC slow memory reserved for coprocessor" if ESP32_ULP_COPROC_ENABLED
         default 512 if ESP32_ULP_COPROC_ENABLED
-        range 32 8192 if ESP32_ULP_COPROC_ENABLED
+        range 32 8176 if ESP32_ULP_COPROC_ENABLED
         default 0 if !ESP32_ULP_COPROC_ENABLED
         range 0 0 if !ESP32_ULP_COPROC_ENABLED
         help
@@ -427,57 +522,17 @@ menu "ESP32-specific"
 
             Data is reserved at the beginning of RTC slow memory.
 
-    choice ESP32_PANIC
-        prompt "Panic handler behaviour"
-        default ESP32_PANIC_PRINT_REBOOT
-        help
-            If FreeRTOS detects unexpected behaviour or an unhandled exception, the panic handler is
-            invoked. Configure the panic handlers action here.
-
-        config ESP32_PANIC_PRINT_HALT
-            bool "Print registers and halt"
-            help
-                Outputs the relevant registers over the serial port and halt the
-                processor. Needs a manual reset to restart.
-
-        config ESP32_PANIC_PRINT_REBOOT
-            bool "Print registers and reboot"
-            help
-                Outputs the relevant registers over the serial port and immediately
-                reset the processor.
-
-        config ESP32_PANIC_SILENT_REBOOT
-            bool "Silent reboot"
-            help
-                Just resets the processor without outputting anything
-
-        config ESP32_PANIC_GDBSTUB
-            bool "Invoke GDBStub"
-            select ESP_GDBSTUB_ENABLED
-            help
-                Invoke gdbstub on the serial port, allowing for gdb to attach to it to do a postmortem
-                of the crash.
-    endchoice
-
     config ESP32_DEBUG_OCDAWARE
         bool "Make exception and panic handlers JTAG/OCD aware"
         default y
+        select FREERTOS_DEBUG_OCDAWARE
         help
             The FreeRTOS panic and unhandled exception handers can detect a JTAG OCD debugger and
             instead of panicking, have the debugger stop on the offending instruction.
 
-    config ESP32_DEBUG_STUBS_ENABLE
-        bool "OpenOCD debug stubs"
-        default COMPILER_OPTIMIZATION_LEVEL_DEBUG
-        depends on !ESP32_TRAX
-        help
-            Debug stubs are used by OpenOCD to execute pre-compiled onboard code which does some useful debugging,
-            e.g. GCOV data dump.
-
     config ESP32_BROWNOUT_DET
-        #The brownout detector code is disabled (by making it depend on a nonexisting symbol) because the current
-        #revision of ESP32 silicon has a bug in the brown-out detector, rendering it unusable for resetting the CPU.
         bool "Hardware brownout detect & reset"
+        depends on !IDF_ENV_FPGA
         default y
         help
             The ESP32 has a built-in brownout detector which can detect if the voltage is lower than
@@ -487,7 +542,7 @@ menu "ESP32-specific"
     choice ESP32_BROWNOUT_DET_LVL_SEL
         prompt "Brownout voltage level"
         depends on ESP32_BROWNOUT_DET
-        default BROWNOUT_DET_LVL_SEL_25
+        default ESP32_BROWNOUT_DET_LVL_SEL_0
         help
             The brownout detector will reset the chip when the supply voltage is approximately
             below this level. Note that there may be some variation of brownout voltage level
@@ -524,19 +579,6 @@ menu "ESP32-specific"
         default 6 if ESP32_BROWNOUT_DET_LVL_SEL_6
         default 7 if ESP32_BROWNOUT_DET_LVL_SEL_7
 
-
-        #Reduce PHY TX power when brownout reset
-    config ESP32_REDUCE_PHY_TX_POWER
-        bool "Reduce PHY TX power when brownout reset"
-        depends on ESP32_BROWNOUT_DET
-        default y
-        help
-            When brownout reset occurs, reduce PHY TX power to keep the code running
-
-            # Note about the use of "FRC1" name: currently FRC1 timer is not used for
-            # high resolution timekeeping anymore. Instead the esp_timer API, implemented
-            # using FRC2 timer, is used.
-            # FRC1 name in the option name is kept for compatibility.
     choice ESP32_TIME_SYSCALL
         prompt "Timers used for gettimeofday function"
         default ESP32_TIME_SYSCALL_USE_RTC_FRC1
@@ -561,12 +603,17 @@ menu "ESP32-specific"
 
         config ESP32_TIME_SYSCALL_USE_RTC_FRC1
             bool "RTC and high-resolution timer"
+            select ESP_TIME_FUNCS_USE_RTC_TIMER
+            select ESP_TIME_FUNCS_USE_ESP_TIMER
         config ESP32_TIME_SYSCALL_USE_RTC
             bool "RTC"
+            select ESP_TIME_FUNCS_USE_RTC_TIMER
         config ESP32_TIME_SYSCALL_USE_FRC1
             bool "High-resolution timer"
+            select ESP_TIME_FUNCS_USE_ESP_TIMER
         config ESP32_TIME_SYSCALL_USE_NONE
             bool "None"
+            select ESP_TIME_FUNCS_USE_NONE
     endchoice
 
     choice ESP32_RTC_CLK_SRC
@@ -583,11 +630,11 @@ menu "ESP32-specific"
               expense of slightly higher (1uA) deep sleep current consumption.
             - "External 32kHz oscillator" allows using 32kHz clock generated by an
               external circuit. In this case, external clock signal must be connected
-              to 32K_XP pin. Amplitude should be <1.2V in case of sine wave signal,
+              to 32K_XN pin. Amplitude should be <1.2V in case of sine wave signal,
               and <1V in case of square wave signal. Common mode voltage should be
               0.1 < Vcm < 0.5Vamp, where Vamp is the signal amplitude.
-              Additionally, 1nF capacitor must be connected between 32K_XN pin and
-              ground. 32K_XN pin can not be used as a GPIO in this case.
+              Additionally, 1nF capacitor must be connected between 32K_XP pin and
+              ground. 32K_XP pin can not be used as a GPIO in this case.
             - "Internal 8.5MHz oscillator divided by 256" option results in higher
               deep sleep current (by 5uA) but has better frequency stability than
               the internal 150kHz oscillator. It does not require external components.
@@ -596,28 +643,46 @@ menu "ESP32-specific"
             bool "Internal 150kHz RC oscillator"
         config ESP32_RTC_CLK_SRC_EXT_CRYS
             bool "External 32kHz crystal"
+            select ESP_SYSTEM_RTC_EXT_XTAL
         config ESP32_RTC_CLK_SRC_EXT_OSC
-            bool "External 32kHz oscillator at 32K_XP pin"
+            bool "External 32kHz oscillator at 32K_XN pin"
         config ESP32_RTC_CLK_SRC_INT_8MD256
             bool "Internal 8.5MHz oscillator, divided by 256 (~33kHz)"
     endchoice
 
-    config ESP32_RTC_EXT_CRYST_ADDIT_CURRENT
-        bool "Additional current for external 32kHz crystal"
+    choice ESP32_RTC_EXT_CRYST_ADDIT_CURRENT_METHOD
+        prompt "Additional current for external 32kHz crystal"
         depends on ESP32_RTC_CLK_SRC_EXT_CRYS
-        default "n"
+        depends on ESP32_REV_MIN <= 1
+        default ESP32_RTC_EXT_CRYST_ADDIT_CURRENT_NONE
         help
-            Choose which additional current is used for rtc external crystal.
+            With some 32kHz crystal configurations, the X32N and X32P pins may not have enough
+            drive strength to keep the crystal oscillating. Choose the method to provide
+            additional current from touchpad 9 to the external 32kHz crystal. Note that
+            the deep sleep current is slightly high (4-5uA) and the touchpad and the
+            wakeup sources of both touchpad and ULP are not available in method 1 and method 2.
 
-            - With some 32kHz crystal configurations, the X32N and X32P pins may not
-              have enough drive strength to keep the crystal oscillating during deep sleep.
-              If this option is enabled, additional current from touchpad 9 is provided
-              internally to drive the 32kHz crystal. If this option is enabled, deep sleep current
-              is slightly higher (4-5uA) and the touchpad and ULP wakeup sources are not available.
+            This problem is fixed in ESP32 ECO 3, so this workaround is not needed. Setting the
+            project configuration to minimum revision ECO3 will disable this option, , allow
+            all wakeup sources, and save some code size.
+
+            - "None" option will not provide additional current to external crystal
+            - "Method 1" option can't ensure 100% to solve the external 32k crystal start failed
+              issue, but the touchpad can work in this method.
+            - "Method 2" option can solve the external 32k issue, but the touchpad can't work
+              in this method.
+
+        config ESP32_RTC_EXT_CRYST_ADDIT_CURRENT_NONE
+            bool "None"
+        config ESP32_RTC_EXT_CRYST_ADDIT_CURRENT
+            bool "Method 1"
+        config ESP32_RTC_EXT_CRYST_ADDIT_CURRENT_V2
+            bool "Method 2"
+    endchoice
 
     config ESP32_RTC_CLK_CAL_CYCLES
         int "Number of cycles for RTC_SLOW_CLK calibration"
-        default 3000 if ESP32_RTC_CLK_SRC_EXT_CRYS
+        default 3000 if ESP32_RTC_CLK_SRC_EXT_CRYS || ESP32_RTC_CLK_SRC_EXT_OSC || ESP32_RTC_CLK_SRC_INT_8MD256
         default 1024 if ESP32_RTC_CLK_SRC_INT_RC
         range 0 27000 if ESP32_RTC_CLK_SRC_EXT_CRYS || ESP32_RTC_CLK_SRC_EXT_OSC || ESP32_RTC_CLK_SRC_INT_8MD256
         range 0 32766 if ESP32_RTC_CLK_SRC_INT_RC
@@ -637,22 +702,15 @@ menu "ESP32-specific"
               In case more value will help improve the definition of the launch of the crystal.
               If the crystal could not start, it will be switched to internal RC.
 
-    config ESP32_RTC_XTAL_BOOTSTRAP_CYCLES
-        int "Bootstrap cycles for external 32kHz crystal"
+    config ESP32_RTC_XTAL_CAL_RETRY
+        int "Number of attempts to repeat 32k XTAL calibration"
+        default 1
         depends on ESP32_RTC_CLK_SRC_EXT_CRYS
-        default 5
-        range 0 32768
         help
-            To reduce the startup time of an external RTC crystal,
-            we bootstrap it with a 32kHz square wave for a fixed number of cycles.
-            Setting 0 will disable bootstrapping (if disabled, the crystal may take
-            longer to start up or fail to oscillate under some conditions).
-
-            If this value is too high, a faulty crystal may initially start and then fail.
-            If this value is too low, an otherwise good crystal may not start.
-
-            To accurately determine if the crystal has started,
-            set a larger "Number of cycles for RTC_SLOW_CLK calibration" (about 3000).
+            Number of attempts to repeat 32k XTAL calibration
+            before giving up and switching to the internal RC.
+            Increase this option if the 32k crystal oscillator
+            does not start and switches to internal RC.
 
     config ESP32_DEEP_SLEEP_WAKEUP_DELAY
         int "Extra delay in deep sleep wake stub (in us)"
@@ -723,10 +781,11 @@ menu "ESP32-specific"
             that after enabling this Wi-Fi/Bluetooth will not work.
 
     config ESP32_COMPATIBLE_PRE_V2_1_BOOTLOADERS
-        bool "App compatible with bootloaders before IDF v2.1"
+        bool "App compatible with bootloaders before ESP-IDF v2.1"
+        select ESP32_COMPATIBLE_PRE_V3_1_BOOTLOADERS
         default n
         help
-            Bootloaders before IDF v2.1 did less initialisation of the
+            Bootloaders before ESP-IDF v2.1 did less initialisation of the
             system clock. This setting needs to be enabled to build an app
             which can be booted by these older bootloaders.
 
@@ -737,6 +796,27 @@ menu "ESP32-specific"
             from IDF v2.1 or newer.
 
             Enabling this setting adds approximately 1KB to the app's IRAM usage.
+
+    config ESP32_COMPATIBLE_PRE_V3_1_BOOTLOADERS
+        bool "App compatible with bootloader and partition table before ESP-IDF v3.1"
+        default n
+        help
+            Partition tables before ESP-IDF V3.1 do not contain an MD5 checksum
+            field, and the bootloader before ESP-IDF v3.1 cannot read a partition
+            table that contains an MD5 checksum field.
+
+            Enable this option only if your app needs to boot on a bootloader and/or
+            partition table that was generated from a version *before* ESP-IDF v3.1.
+
+            If this option and Flash Encryption are enabled at the same time, and any
+            data partitions in the partition table are marked Encrypted, then the
+            partition encrypted flag should be manually verified in the app before accessing
+            the partition (see CVE-2021-27926).
+
+    config ESP32_APP_INIT_CLK
+        bool
+        default y if ESP32_COMPATIBLE_PRE_V2_1_BOOTLOADERS
+        default y if APP_BUILD_TYPE_ELF_RAM
 
     config ESP32_RTCDATA_IN_FAST_MEM
         bool "Place RTC_DATA_ATTR and RTC_RODATA_ATTR variables into RTC fast memory segment"
@@ -776,68 +856,14 @@ menu "ESP32-specific"
             To prevent interrupting DPORT workarounds,
             need to disable interrupt with a maximum used level in the system.
 
+    config ESP32_IRAM_AS_8BIT_ACCESSIBLE_MEMORY
+        bool "Enable IRAM as 8 bit accessible memory"
+        depends on FREERTOS_UNICORE
+        help
+            If enabled, application can use IRAM as byte accessible region for storing data
+            (Note: IRAM region cannot be used as task stack)
+
+            This is possible due to handling of exceptions `LoadStoreError (3)` and `LoadStoreAlignmentError (9)`
+            Each unaligned read/write access will incur a penalty of maximum of 167 CPU cycles.
+
 endmenu  # ESP32-Specific
-
-menu "Power Management"
-
-    config PM_ENABLE
-        bool "Support for power management"
-        default n
-        help
-            If enabled, application is compiled with support for power management.
-            This option has run-time overhead (increased interrupt latency,
-            longer time to enter idle state), and it also reduces accuracy of
-            RTOS ticks and timers used for timekeeping.
-            Enable this option if application uses power management APIs.
-
-    config PM_DFS_INIT_AUTO
-        bool "Enable dynamic frequency scaling (DFS) at startup"
-        depends on PM_ENABLE
-        default n
-        help
-            If enabled, startup code configures dynamic frequency scaling.
-            Max CPU frequency is set to CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ setting,
-            min frequency is set to XTAL frequency.
-            If disabled, DFS will not be active until the application
-            configures it using esp_pm_configure function.
-
-    config PM_USE_RTC_TIMER_REF
-        bool "Use RTC timer to prevent time drift (EXPERIMENTAL)"
-        depends on PM_ENABLE && (ESP32_TIME_SYSCALL_USE_RTC || ESP32_TIME_SYSCALL_USE_RTC_FRC1)
-        default n
-        help
-            When APB clock frequency changes, high-resolution timer (esp_timer)
-            scale and base value need to be adjusted. Each adjustment may cause
-            small error, and over time such small errors may cause time drift.
-            If this option is enabled, RTC timer will be used as a reference to
-            compensate for the drift.
-            It is recommended that this option is only used if 32k XTAL is selected
-            as RTC clock source.
-
-    config PM_PROFILING
-        bool "Enable profiling counters for PM locks"
-        depends on PM_ENABLE
-        default n
-        help
-            If enabled, esp_pm_* functions will keep track of the amount of time
-            each of the power management locks has been held, and esp_pm_dump_locks
-            function will print this information.
-            This feature can be used to analyze which locks are preventing the chip
-            from going into a lower power state, and see what time the chip spends
-            in each power saving mode. This feature does incur some run-time
-            overhead, so should typically be disabled in production builds.
-
-    config PM_TRACE
-        bool "Enable debug tracing of PM using GPIOs"
-        depends on PM_ENABLE
-        default n
-        help
-            If enabled, some GPIOs will be used to signal events such as RTOS ticks,
-            frequency switching, entry/exit from idle state. Refer to pm_trace.c
-            file for the list of GPIOs.
-            This feature is intended to be used when analyzing/debugging behavior
-            of power management implementation, and should be kept disabled in
-            applications.
-
-
-endmenu # "Power Management"

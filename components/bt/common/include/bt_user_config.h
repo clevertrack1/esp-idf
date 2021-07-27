@@ -40,16 +40,16 @@
 /**********************************************************
  * Thread/Task reference
  **********************************************************/
-#ifdef CONFIG_BLUEDROID_PINNED_TO_CORE
-#define UC_TASK_PINNED_TO_CORE              (CONFIG_BLUEDROID_PINNED_TO_CORE < portNUM_PROCESSORS ? CONFIG_BLUEDROID_PINNED_TO_CORE : tskNO_AFFINITY)
+#ifdef CONFIG_BT_BLUEDROID_PINNED_TO_CORE
+#define UC_TASK_PINNED_TO_CORE              (CONFIG_BT_BLUEDROID_PINNED_TO_CORE < portNUM_PROCESSORS ? CONFIG_BT_BLUEDROID_PINNED_TO_CORE : tskNO_AFFINITY)
 #else
 #define UC_TASK_PINNED_TO_CORE              (0)
 #endif
 
-#ifdef CONFIG_BTC_TASK_STACK_SIZE
-#define UC_BTC_TASK_STACK_SIZE              CONFIG_BTC_TASK_STACK_SIZE
+#ifdef CONFIG_BT_BTC_TASK_STACK_SIZE
+#define UC_BTC_TASK_STACK_SIZE              CONFIG_BT_BTC_TASK_STACK_SIZE
 #else
-#define UC_BTC_TASK_STACK_SIZE              3072
+#define UC_BTC_TASK_STACK_SIZE              4096
 #endif
 
 /**********************************************************
@@ -78,6 +78,19 @@
 #define UC_BT_LOG_OSI_TRACE_LEVEL           CONFIG_BT_LOG_OSI_TRACE_LEVEL
 #else
 #define UC_BT_LOG_OSI_TRACE_LEVEL           UC_TRACE_LEVEL_WARNING
+#endif
+
+#ifdef CONFIG_BT_LOG_BLUFI_TRACE_LEVEL
+#define UC_BT_LOG_BLUFI_TRACE_LEVEL         CONFIG_BT_LOG_BLUFI_TRACE_LEVEL
+#else
+#define UC_BT_LOG_BLUFI_TRACE_LEVEL         UC_TRACE_LEVEL_WARNING
+#endif
+
+//BLUFI
+#if  defined(CONFIG_BT_BLE_BLUFI_ENABLE) || defined(CONFIG_BT_NIMBLE_BLUFI_ENABLE)
+#define UC_BT_BLUFI_ENABLE                  TRUE
+#else
+#define UC_BT_BLUFI_ENABLE                  FALSE
 #endif
 
 #endif /* __BT_USER_CONFIG_H__ */

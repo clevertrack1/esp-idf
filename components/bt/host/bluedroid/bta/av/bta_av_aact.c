@@ -27,7 +27,7 @@
 #include "common/bt_target.h"
 #if defined(BTA_AV_INCLUDED) && (BTA_AV_INCLUDED == TRUE)
 
-// #include <assert.h>
+#include <assert.h>
 #include "common/bt_trace.h"
 #include <string.h>
 
@@ -41,6 +41,7 @@
 #if( defined BTA_AR_INCLUDED ) && (BTA_AR_INCLUDED == TRUE)
 #include "bta/bta_ar_api.h"
 #endif
+#include "bta/bta_api.h"
 
 /*****************************************************************************
 **  Constants
@@ -272,7 +273,7 @@ static void bta_av_save_addr(tBTA_AV_SCB *p_scb, const BD_ADDR b)
     APPL_TRACE_DEBUG("bta_av_save_addr r:%d, s:%d",
                      p_scb->recfg_sup, p_scb->suspend_sup);
     if (bdcmp(p_scb->peer_addr, b) != 0) {
-        APPL_TRACE_ERROR("reset flags");
+        APPL_TRACE_WARNING("reset flags");
         /* a new addr, reset the supported flags */
         p_scb->recfg_sup    = TRUE;
         p_scb->suspend_sup  = TRUE;
@@ -508,8 +509,21 @@ static void bta_av_proc_stream_evt(UINT8 handle, BD_ADDR bd_addr, UINT8 event, t
         /* look up application event */
         if ((p_data == NULL) || (p_data->hdr.err_code == 0)) {
             p_msg->hdr.event = bta_av_stream_evt_ok[event];
+            if (p_msg->hdr.event == BTA_AV_STR_START_OK_EVT) {
+                BTA_DmCoexEventTrigger(BTA_COEX_EVT_STREAMING_STARTED);
+            } else if (p_msg->hdr.event == BTA_AV_STR_START_FAIL_EVT ||
+                p_msg->hdr.event == BTA_AV_STR_SUSPEND_CFM_EVT ||
+                p_msg->hdr.event == BTA_AV_STR_CLOSE_EVT) {
+                BTA_DmCoexEventTrigger(BTA_COEX_EVT_STREAMING_STOPPED);
+            }
         } else {
             p_msg->hdr.event = bta_av_stream_evt_fail[event];
+            if (p_msg->hdr.event == BTA_AV_STR_START_FAIL_EVT ||
+                p_msg->hdr.event == BTA_AV_STR_START_OK_EVT ||
+                p_msg->hdr.event == BTA_AV_STR_SUSPEND_CFM_EVT ||
+                p_msg->hdr.event == BTA_AV_STR_CLOSE_EVT) {
+                BTA_DmCoexEventTrigger(BTA_COEX_EVT_STREAMING_STOPPED);
+            }
         }
 
         p_msg->initiator = FALSE;

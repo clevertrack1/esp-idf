@@ -36,6 +36,7 @@
 #include "smp_int.h"
 #include "device/controller.h"
 #include "btm_int.h"
+#include "common/bte_appl.h"
 
 #define SMP_PAIRING_REQ_SIZE    7
 #define SMP_CONFIRM_CMD_SIZE    (BT_OCTET16_LEN + 1)
@@ -1020,7 +1021,9 @@ void smp_proc_pairing_cmpl(tSMP_CB *p_cb)
             //clear flag
             p_rec->ble.skip_update_conn_param = false;
         } else {
+            #if (BT_MULTI_CONNECTION_ENBALE == FALSE)
             L2CA_EnableUpdateBleConnParams(p_cb->pairing_bda, TRUE);
+            #endif
         }
     }
 
@@ -1140,9 +1143,27 @@ BOOLEAN smp_pairing_request_response_parameters_are_valid(tSMP_CB *p_cb)
         return FALSE;
     }
 
-    if ((enc_size < SMP_ENCR_KEY_SIZE_MIN) || (enc_size > SMP_ENCR_KEY_SIZE_MAX)) {
+    /* `bte_appl_cfg.ble_min_enc_key_size` will be `SMP_ENCR_KEY_SIZE_MIN` by
+     * default if not set explicitly  */
+#if (BLE_INCLUDED == TRUE)
+    if (enc_size < bte_appl_cfg.ble_min_key_size) {
         SMP_TRACE_WARNING("Rcvd from the peer cmd 0x%02x with Maximum Encryption \
-            Key value (0x%02x) out of range).\n",
+            Key value (0x%02x) less than minimum required key size).\n",
+                          p_cb->rcvd_cmd_code, enc_size);
+        return FALSE;
+    }
+#else
+    if (enc_size < SMP_ENCR_KEY_SIZE_MIN) {
+        SMP_TRACE_WARNING("Rcvd from the peer cmd 0x%02x with Maximum Encryption \
+            Key value (0x%02x) less than minimum required key size).\n",
+                          p_cb->rcvd_cmd_code, enc_size);
+        return FALSE;
+    }
+#endif
+
+    if (enc_size > SMP_ENCR_KEY_SIZE_MAX) {
+        SMP_TRACE_WARNING("Rcvd from the peer cmd 0x%02x with Maximum Encryption \
+            Key value (0x%02x) greater than supported by stack).\n",
                           p_cb->rcvd_cmd_code, enc_size);
         return FALSE;
     }
@@ -1620,4 +1641,3 @@ BOOLEAN smp_request_oob_data(tSMP_CB *p_cb)
 
 
 #endif
-

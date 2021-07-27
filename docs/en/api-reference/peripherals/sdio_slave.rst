@@ -1,17 +1,23 @@
 SDIO Card Slave Driver
 ======================
 
+.. only:: esp32c3
+
+    .. warning::
+
+        This document is not updated for ESP32-C3 yet.
+
 Overview
 --------
 
-The ESP32 SDIO Card peripherals (Host, Slave) shares two sets of pins as below table.
-The first set is usually occupied by SPI0 bus which is responsible for the SPI flash holding the code to run.
-This means SDIO slave driver can only runs on the second set of pins while SDIO host is not using it.
+    The ESP32 SDIO Card peripherals (Host, Slave) shares two sets of pins as below table.
+    The first set is usually occupied by SPI0 bus which is responsible for the SPI flash holding the code to run.
+    This means SDIO slave driver can only runs on the second set of pins while SDIO host is not using it.
 
-The SDIO slave can run under 3 modes: SPI, 1-bit SD and 4-bit SD modes, which
-is detected automatically by the hardware. According to the SDIO
-specification, CMD and DAT0-3 lines should be pulled up no matter in 1-bit,
-4-bit or SPI mode.
+    The SDIO slave can run under 3 modes: SPI, 1-bit SD and 4-bit SD modes, which
+    is detected automatically by the hardware. According to the SDIO
+    specification, CMD and DAT0-3 lines should be pulled up no matter in 1-bit,
+    4-bit or SPI mode.
 
 Connections
 ^^^^^^^^^^^
@@ -42,13 +48,13 @@ Connections
     pulled up by 10 KOhm resistors. This should be ensured even in 1-bit mode
     or SPI mode. Most official modules don't offer these pullups internally.
     If you are using official development boards, check
-    :ref:`existing_issues_official_modules_sdio` to see whether your
+    :ref:`compatibility_overview_espressif_hw_sdio` to see whether your
     development boards have such pullups.
 
 .. note:: Most official modules have conflicts on strapping pins with the
     SDIO slave function. If you are using a ESP32 module with 3.3 V flash
     inside, you have to burn the EFUSE when you are developing on the module
-    for the first time. See :ref:`existing_issues_official_modules_sdio` to
+    for the first time. See :ref:`compatibility_overview_espressif_hw_sdio` to
     see how to make your modules compatible with the SDIO.
 
     Here is a list for modules/kits with 3.3 V flash:
@@ -94,7 +100,8 @@ The SDIO slave driver uses the following terms:
 - Sending: slave to host transfers.
 - Receiving: host to slave transfers.
 
-.. note:: Register names in ESP Rechnical Reference Manual are oriented from the point of view of the host, i.e. 'rx'
+.. note:: Register names in *{IDF_TARGET_NAME} Technical Reference Manual* > *SDIO Slave Controller*
+  [`PDF <{IDF_TARGET_TRM_EN_URL}#sdioslave>`__] are oriented from the point of view of the host, i.e. 'rx'
   registers refer to sending, while 'tx' registers refer to receiving. We're not using `tx` or `rx` in the driver to
   avoid ambiguities.
 
@@ -127,14 +134,12 @@ SDIO initialization process (Sector 3.1.2 of `SDIO Simplified
 Specification <https://www.sdcard.org/downloads/pls/>`_), which is described
 briefly in :ref:`esp_slave_init`.
 
-Furthermore, there's an ESP32-specific upper-level communication protocol upon
-the CMD52/CMD53 to Func 1. Please refer to :ref:`esp_slave_protocol_layer`,
-or example :example:`peripherals/sdio` when programming your host.
+Furthermore, there's an ESP32-specific upper-level communication protocol upon the CMD52/CMD53 to
+Func 1. Please refer to :ref:`esp_slave_protocol_layer`. There is also a component
+:doc:`ESP Serial Slave Link </api-reference/protocols/esp_serial_slave_link>`
+for ESP32 master to communicate with ESP32 SDIO slave, see example :example:`peripherals/sdio`
+when programming your host.
 
-.. toctree::
-    :hidden:
-
-    esp_slave_protocol
 
 .. _interrupts:
 
@@ -182,9 +187,14 @@ the buffer number of slave.
 To allow the host sending data to the slave, the application has to load buffers to the slave driver by the following steps:
 
 1. Register the buffer by calling ``sdio_slave_recv_register_buf``, and get the handle of the registered buffer. The driver
-   will allocate memory for the linked-list descriptor needed to link the buffer onto the hardware.
+   will allocate memory for the linked-list descriptor needed to link the buffer onto the hardware. The size of these buffers should equal to the Receiving buffer size.
 2. Load buffers onto the driver by passing the buffer handle to ``sdio_slave_recv_load_buf``.
-3. Call ``sdio_slave_recv`` to get the received data. If non-blocking call is needed, set ``wait=0``.
+3. Get the received data by calling ``sdio_slave_recv`` or ``sdio_slave_recv_packet``. If non-blocking call is needed, set ``wait=0``. 
+
+   The difference between two APIs is that, ``sdio_slave_recv_packet`` gives more information about packet, which can consist of several buffers. When ``ESP_ERR_NOT_FINISHED`` is returned by this API, you should call this API iteratively until the return value is ``ESP_OK``. All the continuous buffers returned with ``ESP_ERR_NOT_FINISHED``, together with the last buffer returned with ``ESP_OK``, belong to one packet from the host. Call ``sdio_slave_recv_get_buf`` to get the address of the received data, and the actual length received in each buffer. The packet length is the sum of received length of all the buffers in the packet. 
+
+   If the host never send data longer than the Receiving buffer size, or you don't care about the packet boundary (e.g. the data is only a byte stream), you can call the simpler version ``sdio_slave_recv`` instead.
+
 4. Pass the handle of processed buffer back to the driver by ``sdio_recv_load_buf`` again.
 
 .. note:: To avoid overhead from copying data, the driver itself doesn't have any buffer inside, the application is
@@ -211,7 +221,7 @@ set in the ``send_queue_size``. All the buffers are restricted to be no larger t
 mode several buffers can be sent in one transfer, each buffer is still counted as one in the queue.
 
 The application can call ``sdio_slave_transmit`` to send packets. In this case the function returns when the transfer
-is sucessfully done, so the queue is not fully used. When higher effeciency is required, the application can use the
+is successfully done, so the queue is not fully used. When higher effeciency is required, the application can use the
 following functions instead:
 
 1. Pass buffer information (address, length, as well as an ``arg`` indicating the buffer) to ``sdio_slave_send_queue``.
@@ -275,5 +285,7 @@ Slave/master communication: :example:`peripherals/sdio`.
 API Reference
 -------------
 
-.. include:: /_build/inc/sdio_slave.inc
+.. include-build-file:: inc/sdio_slave_types.inc
+.. include-build-file:: inc/sdio_slave.inc
+
 

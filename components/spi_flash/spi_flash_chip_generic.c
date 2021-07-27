@@ -13,19 +13,65 @@
 // limitations under the License.
 
 #include <stdlib.h>
+#include <string.h>
 #include <sys/param.h> // For MIN/MAX
 #include "spi_flash_chip_generic.h"
 #include "spi_flash_defs.h"
+#include "hal/spi_flash_encrypt_hal.h"
 #include "esp_log.h"
+#include "esp_attr.h"
+
+typedef struct flash_chip_dummy {
+    uint8_t dio_dummy_bitlen;
+    uint8_t qio_dummy_bitlen;
+    uint8_t qout_dummy_bitlen;
+    uint8_t dout_dummy_bitlen;
+    uint8_t fastrd_dummy_bitlen;
+    uint8_t slowrd_dummy_bitlen;
+} flash_chip_dummy_t;
+
+// These parameters can be placed in the ROM. For now we use the code in IDF.
+DRAM_ATTR const static flash_chip_dummy_t default_flash_chip_dummy = {
+    .dio_dummy_bitlen = SPI_FLASH_DIO_DUMMY_BITLEN,
+    .qio_dummy_bitlen = SPI_FLASH_QIO_DUMMY_BITLEN,
+    .qout_dummy_bitlen = SPI_FLASH_QOUT_DUMMY_BITLEN,
+    .dout_dummy_bitlen = SPI_FLASH_DOUT_DUMMY_BITLEN,
+    .fastrd_dummy_bitlen = SPI_FLASH_FASTRD_DUMMY_BITLEN,
+    .slowrd_dummy_bitlen = SPI_FLASH_SLOWRD_DUMMY_BITLEN,
+};
+
+// These are the pointer to HW flash encryption. Default using hardware encryption.
+DRAM_ATTR static spi_flash_encryption_t esp_flash_encryption_default __attribute__((__unused__)) = {
+    .flash_encryption_enable = spi_flash_encryption_hal_enable,
+    .flash_encryption_disable = spi_flash_encryption_hal_disable,
+    .flash_encryption_data_prepare = spi_flash_encryption_hal_prepare,
+    .flash_encryption_done = spi_flash_encryption_hal_done,
+    .flash_encryption_destroy = spi_flash_encryption_hal_destroy,
+    .flash_encryption_check = spi_flash_encryption_hal_check,
+};
+
+DRAM_ATTR flash_chip_dummy_t *rom_flash_chip_dummy = (flash_chip_dummy_t *)&default_flash_chip_dummy;
+
+#define SPI_FLASH_DEFAULT_IDLE_TIMEOUT_MS           200
+#define SPI_FLASH_GENERIC_CHIP_ERASE_TIMEOUT_MS     4000
+#define SPI_FLASH_GENERIC_SECTOR_ERASE_TIMEOUT_MS   600  //according to GD25Q127(125°) + 100ms
+#define SPI_FLASH_GENERIC_BLOCK_ERASE_TIMEOUT_MS    4100  //according to GD25Q127(125°) + 100ms
+#define SPI_FLASH_GENERIC_PAGE_PROGRAM_TIMEOUT_MS   500
+
+#define HOST_DELAY_INTERVAL_US                      1
+#define CHIP_WAIT_IDLE_INTERVAL_US                  20
+
+const DRAM_ATTR flash_chip_op_timeout_t spi_flash_chip_generic_timeout = {
+    .idle_timeout = SPI_FLASH_DEFAULT_IDLE_TIMEOUT_MS * 1000,
+    .chip_erase_timeout = SPI_FLASH_GENERIC_CHIP_ERASE_TIMEOUT_MS * 1000,
+    .block_erase_timeout = SPI_FLASH_GENERIC_BLOCK_ERASE_TIMEOUT_MS * 1000,
+    .sector_erase_timeout = SPI_FLASH_GENERIC_SECTOR_ERASE_TIMEOUT_MS * 1000,
+    .page_program_timeout = SPI_FLASH_GENERIC_PAGE_PROGRAM_TIMEOUT_MS * 1000,
+};
 
 static const char TAG[] = "chip_generic";
 
-#define SPI_FLASH_GENERIC_CHIP_ERASE_TIMEOUT 4000
-#define SPI_FLASH_GENERIC_SECTOR_ERASE_TIMEOUT 500
-#define SPI_FLASH_GENERIC_BLOCK_ERASE_TIMEOUT 1000
-
-#define DEFAULT_IDLE_TIMEOUT 200
-#define DEFAULT_PAGE_PROGRAM_TIMEOUT 500
+#ifndef CONFIG_SPI_FLASH_ROM_IMPL
 
 esp_err_t spi_flash_chip_generic_probe(esp_flash_t *chip, uint32_t flash_id)
 {
@@ -41,7 +87,7 @@ esp_err_t spi_flash_chip_generic_reset(esp_flash_t *chip)
     t = (spi_flash_trans_t) {
         .command = CMD_RST_EN,
     };
-    esp_err_t err = chip->host->common_command(chip->host, &t);
+    esp_err_t err = chip->host->driver->common_command(chip->host, &t);
     if (err != ESP_OK) {
         return err;
     }
@@ -49,27 +95,23 @@ esp_err_t spi_flash_chip_generic_reset(esp_flash_t *chip)
     t = (spi_flash_trans_t) {
         .command = CMD_RST_DEV,
     };
-    err = chip->host->common_command(chip->host, &t);
+    err = chip->host->driver->common_command(chip->host, &t);
     if (err != ESP_OK) {
         return err;
     }
 
-    err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
+    err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
     return err;
 }
 
 esp_err_t spi_flash_chip_generic_detect_size(esp_flash_t *chip, uint32_t *size)
 {
-    uint32_t id = 0;
+    uint32_t id = chip->chip_id;
     *size = 0;
-    esp_err_t err = chip->host->read_id(chip->host, &id);
-    if (err != ESP_OK) {
-        return err;
-    }
 
     /* Can't detect size unless the high byte of the product ID matches the same convention, which is usually 0x40 or
      * 0xC0 or similar. */
-    if ((id & 0x0F00) != 0) {
+    if (((id & 0xFFFF) == 0x0000) || ((id & 0xFFFF) == 0xFFFF)) {
         return ESP_ERR_FLASH_UNSUPPORTED_CHIP;
     }
 
@@ -84,19 +126,23 @@ esp_err_t spi_flash_chip_generic_erase_chip(esp_flash_t *chip)
 
     err = chip->chip_drv->set_chip_write_protect(chip, false);
     if (err == ESP_OK) {
-        err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
     }
-    if (err == ESP_OK) {
-        chip->host->erase_chip(chip->host);
-        //to save time, flush cache here
-        if (chip->host->flush_cache) {
-            err = chip->host->flush_cache(chip->host, 0, chip->size);
-            if (err != ESP_OK) {
-                return err;
-            }
-        }
-        err = chip->chip_drv->wait_idle(chip, SPI_FLASH_GENERIC_CHIP_ERASE_TIMEOUT);
+    //The chip didn't accept the previous write command. Ignore this in preparation stage.
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        chip->host->driver->erase_chip(chip->host);
+        chip->busy = 1;
+#ifdef CONFIG_SPI_FLASH_CHECK_ERASE_TIMEOUT_DISABLED
+        err = chip->chip_drv->wait_idle(chip, ESP_FLASH_CHIP_GENERIC_NO_TIMEOUT);
+#else
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->chip_erase_timeout);
+#endif
     }
+    // Ensure WEL is 0, even if the erase failed.
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        err = chip->chip_drv->set_chip_write_protect(chip, true);
+    }
+
     return err;
 }
 
@@ -104,19 +150,23 @@ esp_err_t spi_flash_chip_generic_erase_sector(esp_flash_t *chip, uint32_t start_
 {
     esp_err_t err = chip->chip_drv->set_chip_write_protect(chip, false);
     if (err == ESP_OK) {
-        err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
     }
-    if (err == ESP_OK) {
-        chip->host->erase_sector(chip->host, start_address);
-        //to save time, flush cache here
-        if (chip->host->flush_cache) {
-            err = chip->host->flush_cache(chip->host, start_address, chip->chip_drv->sector_size);
-            if (err != ESP_OK) {
-                return err;
-            }
-        }
-        err = chip->chip_drv->wait_idle(chip, SPI_FLASH_GENERIC_SECTOR_ERASE_TIMEOUT);
+    //The chip didn't accept the previous write command. Ignore this in preparationstage.
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        chip->host->driver->erase_sector(chip->host, start_address);
+        chip->busy = 1;
+#ifdef CONFIG_SPI_FLASH_CHECK_ERASE_TIMEOUT_DISABLED
+        err = chip->chip_drv->wait_idle(chip, ESP_FLASH_CHIP_GENERIC_NO_TIMEOUT);
+#else
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->sector_erase_timeout);
+#endif
     }
+    // Ensure WEL is 0, even if the erase failed.
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        err = chip->chip_drv->set_chip_write_protect(chip, true);
+    }
+
     return err;
 }
 
@@ -124,35 +174,53 @@ esp_err_t spi_flash_chip_generic_erase_block(esp_flash_t *chip, uint32_t start_a
 {
     esp_err_t err = chip->chip_drv->set_chip_write_protect(chip, false);
     if (err == ESP_OK) {
-        err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
     }
-    if (err == ESP_OK) {
-        chip->host->erase_block(chip->host, start_address);
-        //to save time, flush cache here
-        if (chip->host->flush_cache) {
-            err = chip->host->flush_cache(chip->host, start_address, chip->chip_drv->block_erase_size);
-            if (err != ESP_OK) {
-                return err;
-            }
-        }
-        err = chip->chip_drv->wait_idle(chip, SPI_FLASH_GENERIC_BLOCK_ERASE_TIMEOUT);
+    //The chip didn't accept the previous write command. Ignore this in preparationstage.
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        chip->host->driver->erase_block(chip->host, start_address);
+        chip->busy = 1;
+#ifdef CONFIG_SPI_FLASH_CHECK_ERASE_TIMEOUT_DISABLED
+        err = chip->chip_drv->wait_idle(chip, ESP_FLASH_CHIP_GENERIC_NO_TIMEOUT);
+#else
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->block_erase_timeout);
+#endif
     }
+    // Ensure WEL is 0, even if the erase failed.
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        err = chip->chip_drv->set_chip_write_protect(chip, true);
+    }
+
     return err;
 }
 
 esp_err_t spi_flash_chip_generic_read(esp_flash_t *chip, void *buffer, uint32_t address, uint32_t length)
 {
     esp_err_t err = ESP_OK;
+    const uint32_t page_size = chip->chip_drv->page_size;
+    uint32_t align_address;
+    uint8_t temp_buffer[64]; //spiflash hal max length of read no longer than 64byte
+
     // Configure the host, and return
-    spi_flash_chip_generic_config_host_read_mode(chip);
+    err = spi_flash_chip_generic_config_host_io_mode(chip, false);
+
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGE(TAG, "configure host io mode failed - unsupported");
+        return err;
+    }
 
     while (err == ESP_OK && length > 0) {
-        uint32_t read_len = MIN(length, chip->host->max_read_bytes);
-        err = chip->host->read(chip->host, buffer, address, read_len);
+        memset(temp_buffer, 0xFF, sizeof(temp_buffer));
+        uint32_t read_len = chip->host->driver->read_data_slicer(chip->host, address, length, &align_address, page_size);
+        uint32_t left_off = address - align_address;
+        uint32_t data_len = MIN(align_address + read_len, address + length) - address;
+        err = chip->host->driver->read(chip->host, temp_buffer, align_address, read_len);
 
-        buffer += read_len;
-        length -= read_len;
-        address += read_len;
+        memcpy(buffer, temp_buffer + left_off, data_len);
+
+        address += data_len;
+        buffer = (void *)((intptr_t)buffer + data_len);
+        length = length - data_len;
     }
 
     return err;
@@ -162,13 +230,18 @@ esp_err_t spi_flash_chip_generic_page_program(esp_flash_t *chip, const void *buf
 {
     esp_err_t err;
 
-    err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
-
-    if (err == ESP_OK) {
+    err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
+    //The chip didn't accept the previous write command. Ignore this in preparationstage.
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
         // Perform the actual Page Program command
-        chip->host->program_page(chip->host, buffer, address, length);
+        chip->host->driver->program_page(chip->host, buffer, address, length);
+        chip->busy = 1;
 
-        err = chip->chip_drv->wait_idle(chip, DEFAULT_PAGE_PROGRAM_TIMEOUT);
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->page_program_timeout);
+    }
+    // Ensure WEL is 0, even if the page program failed.
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        err = chip->chip_drv->set_chip_write_protect(chip, true);
     }
     return err;
 }
@@ -177,42 +250,101 @@ esp_err_t spi_flash_chip_generic_write(esp_flash_t *chip, const void *buffer, ui
 {
     esp_err_t err = ESP_OK;
     const uint32_t page_size = chip->chip_drv->page_size;
+    uint32_t align_address;
+    uint8_t temp_buffer[64]; //spiflash hal max length of write no longer than 64byte
 
     while (err == ESP_OK && length > 0) {
-        uint32_t page_len = MIN(chip->host->max_write_bytes, MIN(page_size, length));
-        if ((address + page_len) / page_size != address / page_size) {
-            // Most flash chips can't page write across a page boundary
-            page_len = page_size - (address % page_size);
-        }
+        memset(temp_buffer, 0xFF, sizeof(temp_buffer));
+        uint32_t page_len = chip->host->driver->write_data_slicer(chip->host, address, length, &align_address, page_size);
+        uint32_t left_off = address - align_address;
+        uint32_t write_len = MIN(align_address + page_len, address + length) - address;
+        memcpy(temp_buffer + left_off, buffer, write_len);
 
         err = chip->chip_drv->set_chip_write_protect(chip, false);
+        if (err == ESP_OK && length > 0) {
+            err = chip->chip_drv->program_page(chip, temp_buffer, align_address, page_len);
 
-        if (err == ESP_OK) {
-            err = chip->chip_drv->program_page(chip, buffer, address, page_len);
-            address += page_len;
-            buffer = (void *)((intptr_t)buffer + page_len);
-            length -= page_len;
+            address += write_len;
+            buffer = (void *)((intptr_t)buffer + write_len);
+            length -= write_len;
         }
     }
-    if (err == ESP_OK && chip->host->flush_cache) {
-        err = chip->host->flush_cache(chip->host, address, length);
-    }
+    // The caller is responsible to do host->driver->flush_cache, because this function may be
+    // called in small pieces. Frequency call of flush cache will do harm to the performance.
     return err;
 }
 
 esp_err_t spi_flash_chip_generic_write_encrypted(esp_flash_t *chip, const void *buffer, uint32_t address, uint32_t length)
 {
-    return ESP_ERR_FLASH_UNSUPPORTED_HOST; // TODO
+    spi_flash_encryption_t *esp_flash_encryption = &esp_flash_encryption_default;
+    esp_err_t err = ESP_OK;
+    // Encryption must happen on main flash.
+    if (chip != esp_flash_default_chip) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    /* Check if the buffer and length can qualify the requirments */
+    if (esp_flash_encryption->flash_encryption_check(address, length) != true) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    const uint8_t *data_bytes = (const uint8_t *)buffer;
+    esp_flash_encryption->flash_encryption_enable();
+    while (length > 0) {
+        int block_size;
+        /* Write the largest block if possible */
+        if (address % 64 == 0 && length >= 64) {
+            block_size = 64;
+        } else if (address % 32 == 0 && length >= 32) {
+            block_size = 32;
+        } else {
+            block_size = 16;
+        }
+        // Prepare the flash chip (same time as AES operation, for performance)
+        esp_flash_encryption->flash_encryption_data_prepare(address, (uint32_t *)data_bytes, block_size);
+        err = chip->chip_drv->set_chip_write_protect(chip, false);
+        if (err != ESP_OK) {
+            return err;
+        }
+        // Waiting for encrypting buffer to finish and making result visible for SPI1
+        esp_flash_encryption->flash_encryption_done();
+
+        // Note: For encryption function, after write flash command is sent. The hardware will write the encrypted buffer
+        // prepared in XTS_FLASH_ENCRYPTION register in function `flash_encryption_data_prepare`, instead of the origin
+        // buffer named `data_bytes`.
+
+        err = chip->chip_drv->write(chip, (uint32_t *)data_bytes, address, length);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->page_program_timeout);
+        if (err != ESP_OK) {
+            return err;
+        }
+
+        // Note: we don't wait for idle status here, because this way
+        // the AES peripheral can start encrypting the next
+        // block while the SPI flash chip is busy completing the write
+
+        esp_flash_encryption->flash_encryption_destroy();
+
+        length -= block_size;
+        data_bytes += block_size;
+        address += block_size;
+    }
+
+    esp_flash_encryption->flash_encryption_disable();
+    return err;
 }
 
 esp_err_t spi_flash_chip_generic_set_write_protect(esp_flash_t *chip, bool write_protect)
 {
     esp_err_t err = ESP_OK;
 
-    err = chip->chip_drv->wait_idle(chip, DEFAULT_IDLE_TIMEOUT);
-
-    if (err == ESP_OK) {
-        chip->host->set_write_protect(chip->host, write_protect);
+    err = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
+    //The chip didn't accept the previous write command. Ignore this in preparationstage.
+    if (err == ESP_OK || err == ESP_ERR_NOT_SUPPORTED) {
+        chip->host->driver->set_write_protect(chip->host, write_protect);
     }
 
     bool wp_read;
@@ -227,9 +359,9 @@ esp_err_t spi_flash_chip_generic_set_write_protect(esp_flash_t *chip, bool write
 esp_err_t spi_flash_chip_generic_get_write_protect(esp_flash_t *chip, bool *out_write_protect)
 {
     esp_err_t err = ESP_OK;
-    uint8_t status;
+    uint32_t status;
     assert(out_write_protect!=NULL);
-    err = chip->host->read_status(chip->host, &status);
+    err = chip->chip_drv->read_reg(chip, SPI_FLASH_REG_STATUS, &status);
     if (err != ESP_OK) {
         return err;
     }
@@ -238,150 +370,210 @@ esp_err_t spi_flash_chip_generic_get_write_protect(esp_flash_t *chip, bool *out_
     return err;
 }
 
-esp_err_t spi_flash_generic_wait_host_idle(esp_flash_t *chip, uint32_t *timeout_ms)
+esp_err_t spi_flash_chip_generic_read_reg(esp_flash_t* chip, spi_flash_register_t reg_id, uint32_t* out_reg)
 {
-    while (chip->host->host_idle(chip->host) && *timeout_ms > 0) {
-        if (*timeout_ms > 1) {
-            chip->os_func->delay_ms(chip->os_func_data, 1);
-        }
-        (*timeout_ms)--;
-    }
-    return (*timeout_ms > 0) ? ESP_OK : ESP_ERR_TIMEOUT;
+    return chip->host->driver->read_status(chip->host, (uint8_t*)out_reg);
 }
 
-esp_err_t spi_flash_chip_generic_wait_idle(esp_flash_t *chip, uint32_t timeout_ms)
+esp_err_t spi_flash_chip_generic_yield(esp_flash_t* chip, uint32_t wip)
 {
-    timeout_ms++; // allow at least one pass before timeout, last one has no sleep cycle
+    esp_err_t err = ESP_OK;
+    uint32_t flags = wip? 1: 0; //check_yield() and yield() impls should not issue suspend/resume if this flag is zero
+
+    if (chip->os_func->check_yield) {
+        uint32_t request;
+        //According to the implementation, the check_yield() function may block, poll, delay or do nothing but return
+        err = chip->os_func->check_yield(chip->os_func_data, flags, &request);
+        if (err == ESP_OK) {
+            if (err == ESP_OK && (request & SPI_FLASH_YIELD_REQ_YIELD) != 0) {
+                uint32_t status;
+                //According to the implementation, the yield() function may block until something happen
+                err = chip->os_func->yield(chip->os_func_data, &status);
+            }
+        } else if (err == ESP_ERR_TIMEOUT) {
+            err = ESP_OK;
+        } else {
+            abort();
+        }
+    }
+    return err;
+}
+
+esp_err_t spi_flash_chip_generic_wait_idle(esp_flash_t *chip, uint32_t timeout_us)
+{
+    bool timeout_en = (timeout_us != ESP_FLASH_CHIP_GENERIC_NO_TIMEOUT);
+    if (timeout_us == ESP_FLASH_CHIP_GENERIC_NO_TIMEOUT) {
+        timeout_us = 0;// In order to go into while
+    }
+    timeout_us++; // allow at least one pass before timeout, last one has no sleep cycle
 
     uint8_t status = 0;
-    while (timeout_ms > 0) {
+    const int interval = CHIP_WAIT_IDLE_INTERVAL_US;
+    while (timeout_us > 0) {
+        while (!chip->host->driver->host_status(chip->host) && timeout_us > 0) {
 
-        esp_err_t err = spi_flash_generic_wait_host_idle(chip, &timeout_ms);
+#if HOST_DELAY_INTERVAL_US > 0
+            if (timeout_us > 1) {
+                int delay = MIN(HOST_DELAY_INTERVAL_US, timeout_us);
+                chip->os_func->delay_us(chip->os_func_data, delay);
+                timeout_us -= delay;
+            }
+#endif
+        }
+
+        uint32_t read;
+        esp_err_t err = chip->chip_drv->read_reg(chip, SPI_FLASH_REG_STATUS, &read);
         if (err != ESP_OK) {
             return err;
         }
+        status = read;
 
-        err = chip->host->read_status(chip->host, &status);
-        if (err != ESP_OK) {
-            return err;
+        if ((status & SR_WIP) == 0) { // Verify write in progress is complete
+            if (chip->busy == 1) {
+                chip->busy = 0;
+                if ((status & SR_WREN) != 0) { // The previous command is not accepted, leaving the WEL still set.
+                    return ESP_ERR_NOT_SUPPORTED;
+                }
+            }
+            break;
         }
-        if ((status & SR_WIP) == 0) {
-            break; // Write in progress is complete
+        if (timeout_us > 0 && interval > 0) {
+            int delay = MIN(interval, timeout_us);
+            chip->os_func->delay_us(chip->os_func_data, delay);
+            if (timeout_en) {
+                timeout_us -= delay;
+            }
         }
-        if (timeout_ms > 1) {
-            chip->os_func->delay_ms(chip->os_func_data, 1);
-        }
-        timeout_ms--;
     }
-
-    return (timeout_ms > 0) ?  ESP_OK : ESP_ERR_TIMEOUT;
+    return (timeout_us > 0) ?  ESP_OK : ESP_ERR_TIMEOUT;
 }
 
-esp_err_t spi_flash_chip_generic_config_host_read_mode(esp_flash_t *chip)
+esp_err_t spi_flash_chip_generic_config_host_io_mode(esp_flash_t *chip, bool addr_32bit)
 {
     uint32_t dummy_cyclelen_base;
     uint32_t addr_bitlen;
     uint32_t read_command;
+    bool conf_required = false;
+    esp_flash_io_mode_t read_mode = chip->read_mode;
 
-    switch (chip->read_mode) {
+    switch (read_mode & 0xFFFF) {
     case SPI_FLASH_QIO:
         //for QIO mode, the 4 bit right after the address are used for continuous mode, should be set to 0 to avoid that.
-        addr_bitlen = 32;
-        dummy_cyclelen_base = 4;
-        read_command = CMD_FASTRD_QIO;
+        addr_bitlen = SPI_FLASH_QIO_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->qio_dummy_bitlen;
+        read_command = (addr_32bit? CMD_FASTRD_QIO_4B: CMD_FASTRD_QIO);
+        conf_required = true;
         break;
     case SPI_FLASH_QOUT:
-        addr_bitlen = 24;
-        dummy_cyclelen_base = 8;
-        read_command = CMD_FASTRD_QUAD;
+        addr_bitlen = SPI_FLASH_QOUT_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->qout_dummy_bitlen;
+        read_command = (addr_32bit? CMD_FASTRD_QUAD_4B: CMD_FASTRD_QUAD);
         break;
     case SPI_FLASH_DIO:
         //for DIO mode, the 4 bit right after the address are used for continuous mode, should be set to 0 to avoid that.
-        addr_bitlen = 28;
-        dummy_cyclelen_base = 2;
-        read_command = CMD_FASTRD_DIO;
+        addr_bitlen = SPI_FLASH_DIO_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->dio_dummy_bitlen;
+        read_command = (addr_32bit? CMD_FASTRD_DIO_4B: CMD_FASTRD_DIO);
+        conf_required = true;
         break;
     case SPI_FLASH_DOUT:
-        addr_bitlen = 24;
-        dummy_cyclelen_base = 8;
-        read_command = CMD_FASTRD_DUAL;
+        addr_bitlen = SPI_FLASH_DOUT_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->dout_dummy_bitlen;
+        read_command = (addr_32bit? CMD_FASTRD_DUAL_4B: CMD_FASTRD_DUAL);
         break;
     case SPI_FLASH_FASTRD:
-        addr_bitlen = 24;
-        dummy_cyclelen_base = 8;
-        read_command = CMD_FASTRD;
+        addr_bitlen = SPI_FLASH_FASTRD_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->fastrd_dummy_bitlen;
+        read_command = (addr_32bit? CMD_FASTRD_4B: CMD_FASTRD);
         break;
     case SPI_FLASH_SLOWRD:
-        addr_bitlen = 24;
-        dummy_cyclelen_base = 0;
-        read_command = CMD_READ;
+        addr_bitlen = SPI_FLASH_SLOWRD_ADDR_BITLEN;
+        dummy_cyclelen_base = rom_flash_chip_dummy->slowrd_dummy_bitlen;
+        read_command = (addr_32bit? CMD_READ_4B: CMD_READ);
         break;
     default:
         return ESP_ERR_FLASH_NOT_INITIALISED;
     }
-
-    return chip->host->configure_host_read_mode(chip->host, chip->read_mode, addr_bitlen, dummy_cyclelen_base, read_command);
-}
-
-esp_err_t spi_flash_common_set_read_mode(esp_flash_t *chip, uint8_t qe_rdsr_command, uint8_t qe_wrsr_command, uint8_t qe_sr_bitwidth, unsigned qe_sr_bit)
-{
-    if (spi_flash_is_quad_mode(chip)) {
-        // Ensure quad modes are enabled, using the Quad Enable parameters supplied.
-        spi_flash_trans_t t = {
-            .command = qe_rdsr_command,
-            .mosi_data = 0,
-            .mosi_len = 0,
-            .miso_len = qe_sr_bitwidth,
-        };
-        chip->host->common_command(chip->host, &t);
-        unsigned sr = t.miso_data[0];
-        ESP_EARLY_LOGV(TAG, "set_read_mode: status before 0x%x", sr);
-        if ((sr & qe_sr_bit) == 0) {
-            //some chips needs the write protect to be disabled before writing to Status Register
-            chip->chip_drv->set_chip_write_protect(chip, false);
-
-            sr |= qe_sr_bit;
-            spi_flash_trans_t t = {
-                .command = qe_wrsr_command,
-                .mosi_data = sr,
-                .mosi_len = qe_sr_bitwidth,
-                .miso_len = 0,
-            };
-            chip->host->common_command(chip->host, &t);
-
-            /* Check the new QE bit has stayed set */
-            spi_flash_trans_t t_rdsr = {
-                .command = qe_rdsr_command,
-                .mosi_data = 0,
-                .mosi_len = 0,
-                .miso_len = qe_sr_bitwidth
-            };
-            chip->host->common_command(chip->host, &t_rdsr);
-            sr = t_rdsr.miso_data[0];
-            ESP_EARLY_LOGV(TAG, "set_read_mode: status after 0x%x", sr);
-            if ((sr & qe_sr_bit) == 0) {
-                return ESP_ERR_FLASH_NO_RESPONSE;
-            }
-
-            chip->chip_drv->set_chip_write_protect(chip, true);
-        }
+    //For W25Q256 chip, the only difference between 4-Byte address command and 3-Byte version is the command value and the address bit length.
+    if (addr_32bit) {
+        addr_bitlen += 8;
     }
-    return ESP_OK;
+
+    if (conf_required) {
+        read_mode |= SPI_FLASH_CONFIG_CONF_BITS;
+    }
+
+    return chip->host->driver->configure_host_io_mode(chip->host, read_command, addr_bitlen, dummy_cyclelen_base, read_mode);
 }
 
-esp_err_t spi_flash_chip_generic_set_read_mode(esp_flash_t *chip)
+esp_err_t spi_flash_chip_generic_get_io_mode(esp_flash_t *chip, esp_flash_io_mode_t* out_io_mode)
 {
     // On "generic" chips, this involves checking
     // bit 1 (QE) of RDSR2 (35h) result
     // (it works this way on GigaDevice & Fudan Micro chips, probably others...)
     const uint8_t BIT_QE = 1 << 1;
-    return spi_flash_common_set_read_mode(chip, CMD_RDSR2, CMD_WRSR2, 8, BIT_QE);
+    uint32_t sr;
+    esp_err_t ret = spi_flash_common_read_status_8b_rdsr2(chip, &sr);
+    if (ret == ESP_OK) {
+        *out_io_mode = ((sr & BIT_QE)? SPI_FLASH_QOUT: 0);
+    }
+    return ret;
+}
+
+esp_err_t spi_flash_chip_generic_set_io_mode(esp_flash_t *chip)
+{
+    // On "generic" chips, this involves checking
+    // bit 9 (QE) of RDSR (05h) result
+    const uint32_t BIT_QE = 1 << 9;
+    return spi_flash_common_set_io_mode(chip,
+                                        spi_flash_common_write_status_16b_wrsr,
+                                        spi_flash_common_read_status_16b_rdsr_rdsr2,
+                                        BIT_QE);
+}
+#endif // CONFIG_SPI_FLASH_ROM_IMPL
+
+esp_err_t spi_flash_chip_generic_read_unique_id(esp_flash_t *chip, uint64_t* flash_unique_id)
+{
+    uint64_t unique_id_buf = 0;
+    spi_flash_trans_t transfer = {
+        .command = CMD_RDUID,
+        .miso_len = 8,
+        .miso_data = ((uint8_t *)&unique_id_buf),
+        .dummy_bitlen = 32, //RDUID command followed by 4 bytes (32 bits) of dummy clocks.
+    };
+    esp_err_t err = chip->host->driver->common_command(chip->host, &transfer);
+
+    if (unique_id_buf == 0 || unique_id_buf == UINT64_MAX) {
+        ESP_EARLY_LOGE(TAG, "No response from device when trying to retrieve Unique ID\n");
+        *flash_unique_id = unique_id_buf;
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    *flash_unique_id = __builtin_bswap64(unique_id_buf);
+    return err;
+}
+
+spi_flash_caps_t spi_flash_chip_generic_get_caps(esp_flash_t *chip)
+{
+    // For generic part flash capability, take the XMC chip as reference.
+    spi_flash_caps_t caps_flags = 0;
+    // 32M-bits address support
+
+    // flash suspend support
+    // Only `XMC` support suspend for now.
+    if (chip->chip_id >> 16 == 0x20) {
+        caps_flags |= SPI_FLASH_CHIP_CAP_SUSPEND;
+    }
+    // flash read unique id.
+    caps_flags |= SPI_FLASH_CHIP_CAP_UNIQUE_ID;
+    return caps_flags;
 }
 
 static const char chip_name[] = "generic";
 
 const spi_flash_chip_t esp_flash_chip_generic = {
     .name = chip_name,
+    .timeout = &spi_flash_chip_generic_timeout,
     .probe = spi_flash_chip_generic_probe,
     .reset = spi_flash_chip_generic_reset,
     .detect_size = spi_flash_chip_generic_detect_size,
@@ -409,5 +601,169 @@ const spi_flash_chip_t esp_flash_chip_generic = {
     .write_encrypted = spi_flash_chip_generic_write_encrypted,
 
     .wait_idle = spi_flash_chip_generic_wait_idle,
-    .set_read_mode = spi_flash_chip_generic_set_read_mode,
+    .set_io_mode = spi_flash_chip_generic_set_io_mode,
+    .get_io_mode = spi_flash_chip_generic_get_io_mode,
+
+    .read_reg = spi_flash_chip_generic_read_reg,
+    .yield = spi_flash_chip_generic_yield,
+    .sus_setup = spi_flash_chip_generic_suspend_cmd_conf,
+    .read_unique_id = spi_flash_chip_generic_read_unique_id,
+    .get_chip_caps = spi_flash_chip_generic_get_caps,
 };
+
+#ifndef CONFIG_SPI_FLASH_ROM_IMPL
+/*******************************************************************************
+ * Utility functions
+ ******************************************************************************/
+
+static esp_err_t spi_flash_common_read_qe_sr(esp_flash_t *chip, uint8_t qe_rdsr_command, uint8_t qe_sr_bitwidth, uint32_t *sr)
+{
+    uint32_t sr_buf = 0;
+    spi_flash_trans_t t = {
+        .command = qe_rdsr_command,
+        .miso_data = (uint8_t*) &sr_buf,
+        .miso_len = qe_sr_bitwidth / 8,
+    };
+    esp_err_t ret = chip->host->driver->common_command(chip->host, &t);
+    *sr = sr_buf;
+    return ret;
+}
+
+static esp_err_t spi_flash_common_write_qe_sr(esp_flash_t *chip, uint8_t qe_wrsr_command, uint8_t qe_sr_bitwidth, uint32_t qe)
+{
+    spi_flash_trans_t t = {
+        .command = qe_wrsr_command,
+        .mosi_data = ((uint8_t*) &qe),
+        .mosi_len = qe_sr_bitwidth / 8,
+        .miso_len = 0,
+    };
+    return chip->host->driver->common_command(chip->host, &t);
+}
+
+esp_err_t spi_flash_common_read_status_16b_rdsr_rdsr2(esp_flash_t* chip, uint32_t* out_sr)
+{
+    uint32_t sr, sr2;
+    esp_err_t ret = spi_flash_common_read_qe_sr(chip, CMD_RDSR2, 8, &sr2);
+    if (ret == ESP_OK) {
+        ret = spi_flash_common_read_qe_sr(chip, CMD_RDSR, 8, &sr);
+    }
+    if (ret == ESP_OK) {
+        *out_sr = (sr & 0xff) | ((sr2 & 0xff) << 8);
+    }
+    return ret;
+}
+
+esp_err_t spi_flash_common_read_status_8b_rdsr2(esp_flash_t* chip, uint32_t* out_sr)
+{
+    return spi_flash_common_read_qe_sr(chip, CMD_RDSR2, 8, out_sr);
+}
+
+esp_err_t spi_flash_common_read_status_8b_rdsr(esp_flash_t* chip, uint32_t* out_sr)
+{
+    return spi_flash_common_read_qe_sr(chip, CMD_RDSR, 8, out_sr);
+}
+
+esp_err_t spi_flash_common_write_status_16b_wrsr(esp_flash_t* chip, uint32_t sr)
+{
+    return spi_flash_common_write_qe_sr(chip, CMD_WRSR, 16, sr);
+}
+
+esp_err_t spi_flash_common_write_status_8b_wrsr(esp_flash_t* chip, uint32_t sr)
+{
+    return spi_flash_common_write_qe_sr(chip, CMD_WRSR, 8, sr);
+}
+
+esp_err_t spi_flash_common_write_status_8b_wrsr2(esp_flash_t* chip, uint32_t sr)
+{
+    return spi_flash_common_write_qe_sr(chip, CMD_WRSR2, 8, sr);
+}
+
+esp_err_t spi_flash_common_set_io_mode(esp_flash_t *chip, esp_flash_wrsr_func_t wrsr_func, esp_flash_rdsr_func_t rdsr_func, uint32_t qe_sr_bit)
+{
+    esp_err_t ret = ESP_OK;
+    const bool is_quad_mode = esp_flash_is_quad_mode(chip);
+    bool update_config = false;
+    /*
+     * By default, we don't clear the QE bit even the flash mode is not QIO or QOUT. Force clearing
+     * QE bit by the generic chip driver (command 01H with 2 bytes) may cause the output of some
+     * chips (MXIC) no longer valid.
+     * Enable this option when testing a new flash chip for clearing of QE.
+     */
+    const bool force_check = false;
+
+    bool need_check = is_quad_mode || force_check;
+
+    uint32_t sr_update;
+    if (need_check) {
+        // Ensure quad modes are enabled, using the Quad Enable parameters supplied.
+        uint32_t sr;
+        ret = (*rdsr_func)(chip, &sr);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+        ESP_EARLY_LOGD(TAG, "set_io_mode: status before 0x%x", sr);
+        if (is_quad_mode) {
+            sr_update = sr | qe_sr_bit;
+        } else {
+            sr_update = sr & (~qe_sr_bit);
+        }
+        ESP_EARLY_LOGV(TAG, "set_io_mode: status update 0x%x", sr_update);
+        if (sr != sr_update) {
+            update_config = true;
+        }
+    }
+
+    if (update_config) {
+        //some chips needs the write protect to be disabled before writing to Status Register
+        chip->chip_drv->set_chip_write_protect(chip, false);
+
+        ret = (*wrsr_func)(chip, sr_update);
+        if (ret != ESP_OK) {
+            chip->chip_drv->set_chip_write_protect(chip, true);
+            return ret;
+        }
+
+        ret = chip->chip_drv->wait_idle(chip, chip->chip_drv->timeout->idle_timeout);
+        if (ret == ESP_ERR_NOT_SUPPORTED) {
+            chip->chip_drv->set_chip_write_protect(chip, true);
+        }
+        /* This function is the fallback approach, so we give it higher tolerance.
+         *   When the previous WRSR is rejected by the flash,
+         *  the result of this function is determined by the result -whether the value of RDSR meets the expectation.
+         */
+        if (ret != ESP_OK && ret != ESP_ERR_NOT_SUPPORTED) {
+            return ret;
+        }
+
+        /* Check the new QE bit has stayed set */
+        uint32_t sr;
+        ret = (*rdsr_func)(chip, &sr);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+        ESP_EARLY_LOGD(TAG, "set_io_mode: status after 0x%x", sr);
+        if (sr != sr_update) {
+            ret = ESP_ERR_FLASH_NO_RESPONSE;
+        }
+    }
+    return ret;
+}
+
+#endif // !CONFIG_SPI_FLASH_ROM_IMPL
+
+esp_err_t spi_flash_chip_generic_suspend_cmd_conf(esp_flash_t *chip)
+{
+    // Only XMC support auto-suspend
+    if (chip->chip_id >> 16 != 0x20) {
+        ESP_EARLY_LOGE(TAG, "The flash you use doesn't support auto suspend, only \'XMC\' is supported");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    spi_flash_sus_cmd_conf sus_conf = {
+        .sus_mask = 0x80,
+        .cmd_rdsr = CMD_RDSR2,
+        .sus_cmd = CMD_SUSPEND,
+        .res_cmd = CMD_RESUME,
+    };
+
+    return chip->host->driver->sus_setup(chip->host, &sus_conf);
+}

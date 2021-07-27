@@ -1,6 +1,8 @@
 Miscellaneous System APIs
 =========================
 
+{IDF_TARGET_BASE_MAC_BLOCK: default="BLK1", esp32="BLK0"}
+
 Software reset
 --------------
 
@@ -23,86 +25,127 @@ Two heap memory related functions are provided:
 
 Note that ESP-IDF supports multiple heaps with different capabilities. Functions mentioned in this section return the size of heap memory which can be allocated using ``malloc`` family of functions. For further information about heap memory see :doc:`Heap Memory Allocation <mem_alloc>`.
 
-Random number generation
-------------------------
-
-ESP32 contains a hardware random number generator, values from it can be obtained using :cpp:func:`esp_random`.
-
-When Wi-Fi or Bluetooth are enabled, numbers returned by hardware random number generator (RNG) can be considered true random numbers. Without Wi-Fi or Bluetooth enabled, hardware RNG is a pseudo-random number generator. At startup, ESP-IDF bootloader seeds the hardware RNG with entropy, but care must be taken when reading random values between the start of ``app_main`` and initialization of Wi-Fi or Bluetooth drivers.
-
+.. _MAC-Address-Allocation:
 
 MAC Address
 -----------
 
-These APIs allow querying and customizing MAC addresses used by Wi-Fi, Bluetooth, and Ethernet drivers.
+These APIs allow querying and customizing MAC addresses for different network interfaces that supported (e.g. Wi-Fi, Bluetooth, Ethernet).
 
-ESP32 has up to 4 network interfaces: Wi-Fi station, Wi-Fi AP, Ethernet, and Bluetooth. Each of these interfaces needs to have a MAC address assigned to it. In ESP-IDF these addresses are calculated from *Base MAC address*. Base MAC address can be initialized with factory-programmed value from EFUSE, or with a user-defined value. In addition to setting the base MAC address, applications can specify the way in which MAC addresses are allocated to devices. See `Number of universally administered MAC address`_ section for more details.
+.. only:: SOC_BT_SUPPORTED
 
-+---------------+--------------------------------+----------------------------------+
-| Interface     | MAC address                    | MAC address                      |
-|               | (4 universally administered)   | (2 universally administered)     |
-+===============+================================+==================================+
-| Wi-Fi Station | base_mac                       | base_mac                         |
-+---------------+--------------------------------+----------------------------------+
-| Wi-Fi SoftAP  | base_mac, +1 to the last octet | base_mac, first octet randomized |
-+---------------+--------------------------------+----------------------------------+
-| Bluetooth     | base_mac, +2 to the last octet | base_mac, +1 to the last octet   |
-+---------------+--------------------------------+----------------------------------+
-| Ethernet      | base_mac, +3 to the last octet | base_mac, +1 to the last octet,  |
-|               |                                | first octet randomized           |
-+---------------+--------------------------------+----------------------------------+
+    To fetch MAC address for a specific interface (e.g. Wi-Fi, Bluetooth, Ethernet), call the function :cpp:func:`esp_read_mac` function.
 
+.. only:: not SOC_BT_SUPPORTED
 
-Base MAC address
-^^^^^^^^^^^^^^^^
+    To fetch MAC address for a specific interface (e.g. Wi-Fi Station, Wi-Fi SoftAP), call the function :cpp:func:`esp_read_mac` function.
 
-Wi-Fi, Bluetooth, and Ethernet drivers use :cpp:func:`esp_read_mac` function to get MAC address for a specific interface.
+In ESP-IDF these addresses are calculated from a single *Base MAC address*. By default, the Espressif base MAC address is used. This MAC is pre-programmed into {IDF_TARGET_NAME} eFuse from the factory.
 
-By default, this function will use MAC address factory programmed in BLK0 of EFUSE as the base MAC address. MAC addresses of each interface will be calculated according to the table above.
+.. only:: not esp32s2
 
-Applications which don't use MAC address factory programmed into BLK0 of EFUSE can modify base MAC address used by :cpp:func:`esp_read_mac` using a call to :cpp:func:`esp_base_mac_addr_set`. Custom value of MAC address can come from application defined storage, such as Flash, NVS, etc. Note that the call to :cpp:func:`esp_base_mac_addr_set` needs to happen before network protocol stacks are initialized, for example, early in ``app_main``.
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Interface     | MAC address                           | MAC address                                   |
+    |               | (4 universally administered, default) | (2 universally administered)                  |
+    +===============+=======================================+===============================================+
+    | Wi-Fi Station | base_mac                              | base_mac                                      |
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Wi-Fi SoftAP  | base_mac, +1 to the last octet        | :ref:`Local MAC <local-mac-addresses>`        |
+    |               |                                       | derived from Wi-Fi Station MAC)               |
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Bluetooth     | base_mac, +2 to the last octet        | base_mac, +1 to the last octet                |
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Ethernet      | base_mac, +3 to the last octet        | :ref:`Local MAC <local-mac-addresses>`        |
+    |               |                                       | (derived from Bluetooth MAC)                  |
+    +---------------+---------------------------------------+-----------------------------------------------+
 
-Custom MAC address in BLK3 of EFUSE
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    .. note::
 
-To facilitate usage of custom MAC addresses, ESP-IDF provides :cpp:func:`esp_efuse_mac_get_custom` function, which loads MAC address from BLK3 of EFUSE. This function assumes that custom MAC address is stored in BLK3 of EFUSE (EFUSE_BLK3_RDATA0,  EFUSE_BLK3_RDATA1, EFUSE_BLK3_RDATA2, EFUSE_BLK3_RDATA3, EFUSE_BLK3_RDATA4, EFUSE_BLK3_RDATA5 registers) in the following format:
+       The default :ref:`configuration <CONFIG_{IDF_TARGET_CFG_PREFIX}_UNIVERSAL_MAC_ADDRESSES>`
+       is 4 universally administered MAC addresses, and this is recommended when using
+       Espressif-provided MAC addresses.
 
-+-----------------+-----------+---------------+------------------------------+
-| Field           | # of bits | Range of bits | Notes                        |
-+=================+===========+===============+==============================+
-| Version         | 8         | 191:184       | 0: invalid, others — valid   |
-+-----------------+-----------+---------------+------------------------------+
-| Reserved        | 128       | 183:56        |                              |
-+-----------------+-----------+---------------+------------------------------+
-| MAC address     | 48        | 55:8          |                              |
-+-----------------+-----------+---------------+------------------------------+
-| MAC address CRC | 8         | 7:0           | CRC-8-CCITT, polynomial 0x07 |
-+-----------------+-----------+---------------+------------------------------+
+.. only:: esp32s2
 
-Once MAC address has been obtained using :cpp:func:`esp_efuse_mac_get_custom`, call :cpp:func:`esp_base_mac_addr_set` to set this MAC address as base MAC address.
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Interface     | MAC address                           | MAC address                                   |
+    |               | (2 universally administered, default) | (1 universally administered)                  |
+    +===============+=======================================+===============================================+
+    | Wi-Fi Station | base_mac                              | base_mac                                      |
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Wi-Fi SoftAP  | base_mac, +1 to the last octet        | :ref:`Local MAC <local-mac-addresses>`        |
+    |               |                                       | (derived from Wi-Fi Station MAC)              |
+    +---------------+---------------------------------------+-----------------------------------------------+
+    | Ethernet      | :ref:`Local MAC <local-mac-addresses>`| :ref:`Local MAC <local-mac-addresses>`        |
+    | (see note)    | (derived from Wi-Fi SoftAP MAC        | (derived from base_mac with +1 to last octet. |
+    |               |                                       | Not recommended.)                             |
+    +---------------+---------------------------------------+-----------------------------------------------+
 
+    .. note::
 
-Number of universally administered MAC address
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       The default :ref:`configuration <CONFIG_{IDF_TARGET_CFG_PREFIX}_UNIVERSAL_MAC_ADDRESSES>`
+       is 2 universally administered MAC addresses, and this is recommended when using
+       Espressif-provided MAC addresses.
 
-Serveral MAC addresses (universally administered by IEEE) are uniquely assigned to the networking interfaces (Wi-Fi/BT/Ethernet). The final octet of each universally administered MAC address increases by one. Only the first one of them (which is called base MAC address) is stored in EFUSE or external storage, the others are generated from it. Here, 'generate' means adding 0, 1, 2 and 3 (respectively) to the final octet of the base MAC address.
+.. only:: not SOC_EMAC_SUPPORTED
 
-If the universally administered MAC addresses are not enough for all of the networking interfaces, locally administered MAC addresses which are derived from universally administered MAC addresses are assigned to the rest of networking interfaces. 
+   .. note:: {IDF_TARGET_NAME} has no integrated Ethernet MAC, but it's still possible to calculate an Ethernet MAC address. This MAC address can only be used with an external interface such as a SPI-Ethernet device, see :doc:`/api-reference/network/esp_eth`.
 
-See `this article <https://en.wikipedia.org/wiki/MAC_address#Universal_vs._local>`_ for the definition of local and universally administered MAC addresses.
+Custom Base MAC
+^^^^^^^^^^^^^^^
 
-The number of universally administered MAC address can be configured using :ref:`CONFIG_ESP32_UNIVERSAL_MAC_ADDRESSES`.
+The default Base MAC is pre-programmed by Espressif in eFuse {IDF_TARGET_BASE_MAC_BLOCK}. To set a custom Base MAC instead, call the function :cpp:func:`esp_base_mac_addr_set` before initializing any network interfaces or calling the :cpp:func:`esp_read_mac` function. The customized MAC address can be stored in any supported storage device (e.g. Flash, NVS, etc).
 
-If the number of universal MAC addresses is two, only two interfaces (Wi-Fi Station and Bluetooth) receive a universally administered MAC address. These are generated sequentially by adding 0 and 1 (respectively) to the base MAC address. The remaining two interfaces (Wi-Fi SoftAP and Ethernet) receive local MAC addresses. These are derived from the universal Wi-Fi station and Bluetooth MAC addresses, respectively.
+The custom base MAC addresses should be allocated such that derived MAC addresses will not overlap. Configure the option :ref:`CONFIG_{IDF_TARGET_CFG_PREFIX}_UNIVERSAL_MAC_ADDRESSES` to set the number of valid universal MAC addresses that can be derived from the custom base MAC, according to the table above.
 
-If the number of universal MAC addresses is four, all four interfaces (Wi-Fi Station, Wi-Fi SoftAP, Bluetooth and Ethernet) receive a universally administered MAC address. These are generated sequentially by adding 0, 1, 2 and 3 (respectively) to the final octet of the base MAC address.
+.. note::
 
-When using the default (Espressif-assigned) base MAC address, either setting can be used. When using a custom universal MAC address range, the correct setting will depend on the allocation of MAC addresses in this range (either 2 or 4 per device.)
+   It is also possible to call the function :cpp:func:`esp_netif_set_mac` to set the specific MAC used by a network interface, after network initialization. It's recommended to use the Base MAC approach documented here instead, to avoid the possibility of the original MAC address briefly appearing on the network before it is changed.
+
+.. This API is ESP32-only, see IDF-1326
+.. only:: esp32
+
+    Custom MAC address in eFuse
+    @@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+    When reading custom MAC addresses from eFuse, ESP-IDF provides a helper function :cpp:func:`esp_efuse_mac_get_custom`. This loads the MAC address from eFuse BLK3. This function assumes that the custom base MAC address is stored in the following format:
+
+    +-----------------+-----------+---------------+------------------------------+
+    | Field           | # of bits | Range of bits | Notes                        |
+    +=================+===========+===============+==============================+
+    | Version         | 8         | 191:184       | 0: invalid, others — valid   |
+    +-----------------+-----------+---------------+------------------------------+
+    | Reserved        | 128       | 183:56        |                              |
+    +-----------------+-----------+---------------+------------------------------+
+    | MAC address     | 48        | 55:8          |                              |
+    +-----------------+-----------+---------------+------------------------------+
+    | MAC address CRC | 8         | 7:0           | CRC-8-CCITT, polynomial 0x07 |
+    +-----------------+-----------+---------------+------------------------------+
+
+    Once MAC address has been obtained using :cpp:func:`esp_efuse_mac_get_custom`, call :cpp:func:`esp_base_mac_addr_set` to set this MAC address as base MAC address.
+
+.. _local-mac-addresses:
+
+Local vs Universal MAC addresses
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+{IDF_TARGET_NAME} comes pre-programmed with enough valid Espressif universally administered MAC addresses for all internal interfaces. The specific calculations to derive an interface's MAC address from the base MAC address is shown in the table above..
+
+When using a custom MAC address scheme, it's possible that not all interfaces can be assigned a universally administered MAC address. In these cases, a locally administered MAC address is assigned. Note that these addresses are intended for use on a single local network, only.
+
+See `this article <https://en.wikipedia.org/wiki/MAC_address#Universal_vs._local_(U/L_bit)>`_ for the definition of local and universally administered MAC addresses.
+
+Function :cpp:func:`esp_derive_local_mac` is called internally to derive a local MAC address from a universal MAC address. The process is as follows:
+
+1. The U/L bit (bit value 0x2) is set in the first octet of the universal MAC address, creating a local MAC address.
+2. If this bit is already set in the supplied universal MAC address (meaning: the supplied "universal" MAC address was in fact already a local MAC address), then the first octet of the local MAC address is XORed with 0x4.
 
 Chip version
 ------------
 
 :cpp:func:`esp_chip_info` function fills :cpp:class:`esp_chip_info_t` structure with information about the chip. This includes the chip revision, number of CPU cores, and a bit mask of features enabled in the chip.
+
+.. _idf-version-h:
 
 SDK version
 -----------
@@ -114,7 +157,7 @@ To get the version at build time, additional version macros are provided. They c
 * :c:macro:`ESP_IDF_VERSION_MAJOR`, :c:macro:`ESP_IDF_VERSION_MINOR`, :c:macro:`ESP_IDF_VERSION_PATCH` are defined to integers representing major, minor, and patch version.
 
 * :c:macro:`ESP_IDF_VERSION_VAL` and :c:macro:`ESP_IDF_VERSION` can be used when implementing version checks:
-  
+
   .. code-block:: c
 
       #include "esp_idf_version.h"
@@ -124,9 +167,11 @@ To get the version at build time, additional version macros are provided. They c
       #endif
 
 
+.. _app-version:
+
 App version
 -----------
-Application version is stored in :cpp:class:`esp_app_desc_t` structure. It is located in DROM sector and has a fixed offset from the beginning of the binary file. 
+Application version is stored in :cpp:class:`esp_app_desc_t` structure. It is located in DROM sector and has a fixed offset from the beginning of the binary file.
 The structure is located after :cpp:class:`esp_image_header_t` and :cpp:class:`esp_image_segment_header_t` structures. The field version has string type and max length 32 chars.
 
 To set version in your project manually you need to set ``PROJECT_VER`` variable in your project CMakeLists.txt/Makefile:
@@ -135,12 +180,11 @@ To set version in your project manually you need to set ``PROJECT_VER`` variable
 
 (For legacy GNU Make build system: in application Makefile put ``PROJECT_VER = "0.1.0.1"`` before including ``project.mk``.)
 
-If ``PROJECT_VER`` variable is not set in the project then it will be retrieved from either ``$(PROJECT_PATH)/version.txt`` file (if present) else using git command ``git describe``. If neither is available then ``PROJECT_VER`` will be set to "1". Application can make use of this by calling :cpp:func:`esp_ota_get_app_description` or :cpp:func:`esp_ota_get_partition_description` functions.
+If :ref:`CONFIG_APP_PROJECT_VER_FROM_CONFIG` option is set, the value of :ref:`CONFIG_APP_PROJECT_VER` will be used. Otherwise if ``PROJECT_VER`` variable is not set in the project then it will be retrieved from either ``$(PROJECT_PATH)/version.txt`` file (if present) else using git command ``git describe``. If neither is available then ``PROJECT_VER`` will be set to "1". Application can make use of this by calling :cpp:func:`esp_ota_get_app_description` or :cpp:func:`esp_ota_get_partition_description` functions.
 
 API Reference
 -------------
 
-.. include:: /_build/inc/esp_system.inc
-.. include:: /_build/inc/esp_idf_version.inc
-
+.. include-build-file:: inc/esp_system.inc
+.. include-build-file:: inc/esp_idf_version.inc
 

@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <string.h>
 
+#include "esp32_mock.h"
 #include "mdns.h"
 #include "mdns_private.h"
 
@@ -124,7 +125,7 @@ int main(int argc, char** argv)
     };
 
     const uint8_t mac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x32};
-    
+
     uint8_t buf[1460];
     char winstance[21+strlen(mdns_hostname)];
 
@@ -183,9 +184,9 @@ int main(int argc, char** argv)
         || mdns_test_service_add("_ptp", "_tcp", 885)
         || mdns_test_service_add("_sleep-proxy", "_udp", 885))
     {
-        abort(); 
+        abort();
     }
-        
+
     mdns_result_t * results = NULL;
     FILE *file;
     size_t nread;
@@ -204,9 +205,8 @@ int main(int argc, char** argv)
         //
         // Note: parameter1 is a file (mangled packet) which caused the crash
         file = fopen(argv[1], "r");
-        if (file) {
-            len = fread(buf, 1, 1460, file);
-        }
+        assert(file >= 0 );
+        len = fread(buf, 1, 1460, file);
         fclose(file);
     }
 

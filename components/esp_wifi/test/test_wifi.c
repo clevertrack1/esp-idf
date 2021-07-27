@@ -14,7 +14,6 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 
-static const char* TAG = "test_wifi";
 
 #define DEFAULT_SSID "TEST_SSID"
 #define DEFAULT_PWD "TEST_PASS"
@@ -24,6 +23,9 @@ static const char* TAG = "test_wifi";
 
 #define EVENT_HANDLER_FLAG_DO_NOT_AUTO_RECONNECT 0x00000001
 
+#if !TEMPORARY_DISABLED_FOR_TARGETS(ESP32S2, ESP32S3, ESP32C3)
+/* TODO IDF-2618 */
+static const char* TAG = "test_wifi";
 static uint32_t wifi_event_handler_flag;
 
 static EventGroupHandle_t wifi_events;
@@ -64,8 +66,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
         case IP_EVENT_STA_GOT_IP:
             event = (ip_event_got_ip_t*)event_data;
             ESP_LOGI(TAG, "IP_EVENT_STA_GOT_IP");
-            ESP_LOGI(TAG, "got ip:%s\n",
-            ip4addr_ntoa(&event->ip_info.ip));
+            ESP_LOGI(TAG, "got ip:" IPSTR "\n", IP2STR(&event->ip_info.ip));
             if (wifi_events) {
                 xEventGroupSetBits(wifi_events, GOT_IP_EVENT);
             }
@@ -81,6 +82,9 @@ static esp_err_t event_init(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler, NULL));
+    esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
+
     return ESP_OK;
 }
 
@@ -98,7 +102,7 @@ static void test_wifi_init_deinit(wifi_init_config_t *cfg, wifi_config_t* wifi_c
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_set_mode"));
     TEST_ESP_OK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_set_config"));
-    TEST_ESP_OK(esp_wifi_set_config(ESP_IF_WIFI_STA, wifi_config));
+    TEST_ESP_OK(esp_wifi_set_config(WIFI_IF_STA, wifi_config));
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_deinit..."));
     TEST_ESP_OK(esp_wifi_deinit());
 }
@@ -112,7 +116,7 @@ static void test_wifi_start_stop(wifi_init_config_t *cfg, wifi_config_t* wifi_co
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_set_mode"));
     TEST_ESP_OK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_set_config"));
-    TEST_ESP_OK(esp_wifi_set_config(ESP_IF_WIFI_STA, wifi_config));
+    TEST_ESP_OK(esp_wifi_set_config(WIFI_IF_STA, wifi_config));
     //now start wifi
     ESP_LOGI(TAG, EMPH_STR("esp_wifi_start..."));
     TEST_ESP_OK(esp_wifi_start());
@@ -134,7 +138,7 @@ TEST_CASE("wifi stop and deinit","[wifi]")
             .password = DEFAULT_PWD
         },
     };
-    
+
     //init nvs
     ESP_LOGI(TAG, EMPH_STR("nvs_flash_init"));
     esp_err_t r = nvs_flash_init();
@@ -142,15 +146,16 @@ TEST_CASE("wifi stop and deinit","[wifi]")
         ESP_LOGI(TAG, EMPH_STR("no free pages or nvs version mismatch, erase.."));
         TEST_ESP_OK(nvs_flash_erase());
         r = nvs_flash_init();
-    } 
+    }
     TEST_ESP_OK(r);
     //init tcpip
-    ESP_LOGI(TAG, EMPH_STR("tcpip_adapter_init"));
-    tcpip_adapter_init();
+    ESP_LOGI(TAG, EMPH_STR("esp_netif_init"));
+    esp_netif_init();
     //init event loop
+
     ESP_LOGI(TAG, EMPH_STR("event_init"));
     event_init();
-    
+
     ESP_LOGI(TAG, "test wifi init & deinit...");
     test_wifi_init_deinit(&cfg, &wifi_config);
     ESP_LOGI(TAG, "wifi init & deinit seem to be OK.");
@@ -163,7 +168,7 @@ TEST_CASE("wifi stop and deinit","[wifi]")
     nvs_flash_deinit();
     ESP_LOGI(TAG, "test passed...");
 
-    TEST_IGNORE_MESSAGE("this test case is ignored due to the critical memory leak of tcpip_adapter and event_loop.");
+    TEST_IGNORE_MESSAGE("this test case is ignored due to the critical memory leak of esp_netif and event_loop.");
 }
 
 static void start_wifi_as_softap(void)
@@ -262,7 +267,7 @@ static void send_ds2ds_packet(void)
 
     // send packet 20 times to make sure receiver will get this packet
     for (uint16_t i = 0; i < 20; i++) {
-        esp_wifi_80211_tx(ESP_IF_WIFI_AP, ds2ds_pdu, sizeof(ds2ds_pdu), true);
+        esp_wifi_80211_tx(WIFI_IF_AP, ds2ds_pdu, sizeof(ds2ds_pdu), true);
         vTaskDelay(50 / portTICK_PERIOD_MS);
     }
     stop_wifi();
@@ -284,7 +289,8 @@ static void wifi_connect_by_bssid(uint8_t *bssid)
 
     TEST_ESP_OK(esp_wifi_set_config(WIFI_IF_STA, &w_config));
     TEST_ESP_OK(esp_wifi_connect());
-    bits = xEventGroupWaitBits(wifi_events, GOT_IP_EVENT, 1, 0, 5000/portTICK_RATE_MS);
+    ESP_LOGI(TAG, "called esp_wifi_connect()");
+    bits = xEventGroupWaitBits(wifi_events, GOT_IP_EVENT, 1, 0, 7000/portTICK_RATE_MS);
     TEST_ASSERT(bits == GOT_IP_EVENT);
 }
 
@@ -323,7 +329,7 @@ static void test_wifi_connection_softap(void)
 
     start_wifi_as_softap();
 
-    TEST_ESP_OK(esp_wifi_get_mac(ESP_IF_WIFI_AP, mac));
+    TEST_ESP_OK(esp_wifi_get_mac(WIFI_IF_AP, mac));
     sprintf(mac_str, MACSTR, MAC2STR(mac));
 
     unity_send_signal_param("SoftAP mac", mac_str);
@@ -336,3 +342,5 @@ static void test_wifi_connection_softap(void)
 }
 
 TEST_CASE_MULTIPLE_DEVICES("test wifi retain connection for 60s", "[wifi][test_env=UT_T2_1][timeout=90]", test_wifi_connection_sta, test_wifi_connection_softap);
+
+#endif //!TEMPORARY_DISABLED_FOR_TARGETS(ESP32S2, ESP32S3, ESP32C3)

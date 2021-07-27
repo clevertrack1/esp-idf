@@ -58,8 +58,9 @@ SemaphoreHandle_t print_mux = NULL;
  * | start | slave_addr + rd_bit +ack | read n-1 bytes + ack | read 1 byte + nack | stop |
  * --------|--------------------------|----------------------|--------------------|------|
  *
+ * @note cannot use master read slave on esp32c3 because there is only one i2c controller on esp32c3
  */
-static esp_err_t i2c_master_read_slave(i2c_port_t i2c_num, uint8_t *data_rd, size_t size)
+static esp_err_t __attribute__((unused)) i2c_master_read_slave(i2c_port_t i2c_num, uint8_t *data_rd, size_t size)
 {
     if (size == 0) {
         return ESP_OK;
@@ -87,8 +88,9 @@ static esp_err_t i2c_master_read_slave(i2c_port_t i2c_num, uint8_t *data_rd, siz
  * | start | slave_addr + wr_bit + ack | write n bytes + ack  | stop |
  * --------|---------------------------|----------------------|------|
  *
+ * @note cannot use master write slave on esp32c3 because there is only one i2c controller on esp32c3
  */
-static esp_err_t i2c_master_write_slave(i2c_port_t i2c_num, uint8_t *data_wr, size_t size)
+static esp_err_t __attribute__((unused)) i2c_master_write_slave(i2c_port_t i2c_num, uint8_t *data_wr, size_t size)
 {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
@@ -144,37 +146,43 @@ static esp_err_t i2c_master_sensor_test(i2c_port_t i2c_num, uint8_t *data_h, uin
 static esp_err_t i2c_master_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
-    i2c_config_t conf;
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = I2C_MASTER_SDA_IO;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_io_num = I2C_MASTER_SCL_IO;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
-    i2c_param_config(i2c_master_port, &conf);
-    return i2c_driver_install(i2c_master_port, conf.mode,
-                              I2C_MASTER_RX_BUF_DISABLE,
-                              I2C_MASTER_TX_BUF_DISABLE, 0);
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+        // .clk_flags = 0,          /*!< Optional, you can use I2C_SCLK_SRC_FLAG_* flags to choose i2c source clock here. */
+    };
+    esp_err_t err = i2c_param_config(i2c_master_port, &conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
 }
 
+#if !CONFIG_IDF_TARGET_ESP32C3
 /**
  * @brief i2c slave initialization
  */
 static esp_err_t i2c_slave_init(void)
 {
     int i2c_slave_port = I2C_SLAVE_NUM;
-    i2c_config_t conf_slave;
-    conf_slave.sda_io_num = I2C_SLAVE_SDA_IO;
-    conf_slave.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf_slave.scl_io_num = I2C_SLAVE_SCL_IO;
-    conf_slave.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf_slave.mode = I2C_MODE_SLAVE;
-    conf_slave.slave.addr_10bit_en = 0;
-    conf_slave.slave.slave_addr = ESP_SLAVE_ADDR;
-    i2c_param_config(i2c_slave_port, &conf_slave);
-    return i2c_driver_install(i2c_slave_port, conf_slave.mode,
-                              I2C_SLAVE_RX_BUF_LEN,
-                              I2C_SLAVE_TX_BUF_LEN, 0);
+    i2c_config_t conf_slave = {
+        .sda_io_num = I2C_SLAVE_SDA_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = I2C_SLAVE_SCL_IO,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .mode = I2C_MODE_SLAVE,
+        .slave.addr_10bit_en = 0,
+        .slave.slave_addr = ESP_SLAVE_ADDR,
+    };
+    esp_err_t err = i2c_param_config(i2c_slave_port, &conf_slave);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return i2c_driver_install(i2c_slave_port, conf_slave.mode, I2C_SLAVE_RX_BUF_LEN, I2C_SLAVE_TX_BUF_LEN, 0);
 }
 
 /**
@@ -191,15 +199,18 @@ static void disp_buf(uint8_t *buf, int len)
     }
     printf("\n");
 }
+#endif //!CONFIG_IDF_TARGET_ESP32C3
 
 static void i2c_test_task(void *arg)
 {
-    int i = 0;
     int ret;
     uint32_t task_idx = (uint32_t)arg;
+#if !CONFIG_IDF_TARGET_ESP32C3
+    int i = 0;
     uint8_t *data = (uint8_t *)malloc(DATA_LENGTH);
     uint8_t *data_wr = (uint8_t *)malloc(DATA_LENGTH);
     uint8_t *data_rd = (uint8_t *)malloc(DATA_LENGTH);
+#endif //!CONFIG_IDF_TARGET_ESP32C3
     uint8_t sensor_data_h, sensor_data_l;
     int cnt = 0;
     while (1) {
@@ -221,6 +232,7 @@ static void i2c_test_task(void *arg)
         xSemaphoreGive(print_mux);
         vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS * (task_idx + 1)) / portTICK_RATE_MS);
         //---------------------------------------------------
+#if !CONFIG_IDF_TARGET_ESP32C3
         for (i = 0; i < DATA_LENGTH; i++) {
             data[i] = i;
         }
@@ -276,6 +288,7 @@ static void i2c_test_task(void *arg)
         }
         xSemaphoreGive(print_mux);
         vTaskDelay((DELAY_TIME_BETWEEN_ITEMS_MS * (task_idx + 1)) / portTICK_RATE_MS);
+#endif //!CONFIG_IDF_TARGET_ESP32C3
     }
     vSemaphoreDelete(print_mux);
     vTaskDelete(NULL);
@@ -284,7 +297,9 @@ static void i2c_test_task(void *arg)
 void app_main(void)
 {
     print_mux = xSemaphoreCreateMutex();
+#if !CONFIG_IDF_TARGET_ESP32C3
     ESP_ERROR_CHECK(i2c_slave_init());
+#endif
     ESP_ERROR_CHECK(i2c_master_init());
     xTaskCreate(i2c_test_task, "i2c_test_task_0", 1024 * 2, (void *)0, 10, NULL);
     xTaskCreate(i2c_test_task, "i2c_test_task_1", 1024 * 2, (void *)1, 10, NULL);

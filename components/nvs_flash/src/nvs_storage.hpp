@@ -15,12 +15,12 @@
 #define nvs_storage_hpp
 
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include "nvs.hpp"
 #include "nvs_types.hpp"
 #include "nvs_page.hpp"
 #include "nvs_pagemanager.hpp"
+#include "partition.hpp"
 
 //extern void dumpBytes(const uint8_t* data, size_t count);
 
@@ -52,8 +52,8 @@ class Storage : public intrusive_list_node<Storage>
         public:
             char key[Item::MAX_KEY_LENGTH + 1];
             uint8_t nsIndex;
-            uint8_t chunkCount; 
-            VerOffset chunkStart; 
+            uint8_t chunkCount;
+            VerOffset chunkStart;
     };
 
     typedef intrusive_list<BlobIndexNode> TBlobIndexList;
@@ -61,7 +61,11 @@ class Storage : public intrusive_list_node<Storage>
 public:
     ~Storage();
 
-    Storage(const char *pName = NVS_DEFAULT_PART_NAME) : mPartitionName(pName) { };
+    Storage(Partition *partition) : mPartition(partition) {
+        if (partition == nullptr) {
+            abort();
+        }
+    };
 
     esp_err_t init(uint32_t baseSector, uint32_t sectorCount);
 
@@ -93,13 +97,19 @@ public:
     {
         return eraseItem(nsIndex, ItemType::ANY, key);
     }
-    
+
     esp_err_t eraseNamespace(uint8_t nsIndex);
+
+    const Partition *getPart() const
+    {
+        return mPartition;
+    }
 
     const char *getPartName() const
     {
-        return mPartitionName;
+        return mPartition->get_partition_name();
     }
+
     uint32_t getBaseSector()
     {
         return mPageManager.getBaseSector();
@@ -114,7 +124,7 @@ public:
     esp_err_t eraseMultiPageBlob(uint8_t nsIndex, const char* key, VerOffset chunkStart = VerOffset::VER_ANY);
 
     void debugDump();
-    
+
     void debugCheck();
 
     esp_err_t fillStats(nvs_stats_t& nvsStats);
@@ -134,7 +144,7 @@ protected:
 
     void clearNamespaces();
 
-    void populateBlobIndices(TBlobIndexList&);
+    esp_err_t populateBlobIndices(TBlobIndexList&);
 
     void eraseOrphanDataBlobs(TBlobIndexList&);
 
@@ -143,7 +153,7 @@ protected:
     esp_err_t findItem(uint8_t nsIndex, ItemType datatype, const char* key, Page* &page, Item& item, uint8_t chunkIdx = Page::CHUNK_ANY, VerOffset chunkStart = VerOffset::VER_ANY);
 
 protected:
-    const char *mPartitionName;
+    Partition *mPartition;
     size_t mPageCount;
     PageManager mPageManager;
     TNamespaces mNamespaces;

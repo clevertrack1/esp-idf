@@ -37,6 +37,12 @@ tBTM_CB  btm_cb;
 tBTM_CB  *btm_cb_ptr;
 #endif
 
+#if (BLE_50_FEATURE_SUPPORT == TRUE)
+extern void btm_ble_extendadvcb_init(void);
+extern void btm_ble_advrecod_init(void);
+#endif
+
+
 /*******************************************************************************
 **
 ** Function         btm_init
@@ -79,6 +85,12 @@ void btm_init (void)
     btm_ble_lock_init();
     btm_ble_sem_init();
 #endif
+    btm_sec_dev_init();
+#if (BLE_50_FEATURE_SUPPORT == TRUE)
+    btm_ble_extendadvcb_init();
+    btm_ble_advrecod_init();
+#endif
+
 }
 
 
@@ -95,6 +107,8 @@ void btm_free(void)
 {
     fixed_queue_free(btm_cb.page_queue, osi_free_func);
     fixed_queue_free(btm_cb.sec_pending_q, osi_free_func);
+    btm_acl_free();
+    btm_sec_dev_free();
 #if BTM_DYNAMIC_MEMORY
     FREE_AND_RESET(btm_cb_ptr);
 #endif

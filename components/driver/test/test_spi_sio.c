@@ -1,4 +1,9 @@
 /*
+ * SPDX-FileCopyrightText: 2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+/*
  Tests for the spi sio mode
 */
 
@@ -7,12 +12,11 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
-#include "esp32/rom/ets_sys.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
-#include "freertos/xtensa_api.h"
 #include "unity.h"
 #include "driver/spi_master.h"
 #include "driver/spi_slave.h"
@@ -22,8 +26,11 @@
 #include "test_utils.h"
 #include "test/test_common_spi.h"
 #include "soc/gpio_periph.h"
-#include "sdkconfig.h"
 
+#include "hal/spi_ll.h"
+
+#if !TEMPORARY_DISABLED_FOR_TARGETS(ESP32S3)
+#if !DISABLED_FOR_TARGETS(ESP32C3)  //There is only one GPSPI controller, so single-board test is disabled.
 
 /********************************************************************************
  *      Test SIO
@@ -34,10 +41,9 @@ TEST_CASE("local test sio", "[spi]")
     WORD_ALIGNED_ATTR uint8_t master_rx_buffer[320];
     WORD_ALIGNED_ATTR uint8_t slave_rx_buffer[320];
 
-    for (int i = 0; i < 16; i++) {
-        SPI1.data_buf[0] = 0xcccccccc;
-        SPI2.data_buf[0] = 0xcccccccc;
-    }
+    uint32_t pre_set[16] = {[0 ... 15] = 0xcccccccc,};
+    spi_ll_write_buffer(SPI_LL_GET_HW(TEST_SPI_HOST),   (uint8_t*)pre_set, 16*32);
+    spi_ll_write_buffer(SPI_LL_GET_HW(TEST_SLAVE_HOST), (uint8_t*)pre_set, 16*32);
 
     /* This test use a strange connection to test the SIO mode:
      * master spid -> slave spid
@@ -51,7 +57,7 @@ TEST_CASE("local test sio", "[spi]")
 
     int miso_io_num = bus_cfg.miso_io_num;
     int mosi_io_num = bus_cfg.mosi_io_num;
-    bus_cfg.mosi_io_num = bus_cfg.miso_io_num;
+    bus_cfg.mosi_io_num = miso_io_num;
     bus_cfg.miso_io_num = -1;
     TEST_ESP_OK(spi_bus_initialize(TEST_SPI_HOST, &bus_cfg, 0));
 
@@ -101,7 +107,11 @@ TEST_CASE("local test sio", "[spi]")
     spi_slave_free(TEST_SLAVE_HOST);
     master_free_device_bus(spi);
 }
+#endif //!DISABLED_FOR_TARGETS(ESP32C3)  //There is only one GPSPI controller, so single-board test is disabled.
 
+
+#if !TEMPORARY_DISABLED_FOR_TARGETS(ESP32S2, ESP32C3)
+//These tests are ESP32 only due to lack of runners
 /********************************************************************************
  *      Test SIO Master & Slave
  ********************************************************************************/
@@ -218,3 +228,6 @@ void test_sio_slave(void)
 }
 
 TEST_CASE_MULTIPLE_DEVICES("sio mode", "[spi][test_env=Example_SPI_Multi_device]", test_sio_master, test_sio_slave);
+#endif // !TEMPORARY_DISABLED_FOR_TARGETS(ESP32S2, ESP32C3)
+
+#endif // !TEMPORARY_DISABLED_FOR_TARGETS(ESP32S3, ESP32C3)

@@ -123,11 +123,14 @@ Event IDs and Corresponding Data Structures
 | IP_EVENT_ETH_GOT_IP                | :cpp:class:`ip_event_got_ip_t`                |
 | (SYSTEM_EVENT_ETH_GOT_IP)          |                                               |
 +------------------------------------+-----------------------------------------------+
+| IP_EVENT_ETH_LOST_IP               | n/a                                           |
+| (SYSTEM_EVENT_ETH_LOST_IP)         |                                               |
++------------------------------------+-----------------------------------------------+
 
 Mesh Events
 -----------
 
-ESP-MESH uses a system similar to the :ref:`legacy-event-loop` to deliver events to the application. See :ref:`mesh-events` for details.
+ESP-WIFI-MESH uses a system similar to the :ref:`legacy-event-loop` to deliver events to the application. See :ref:`mesh-events` for details.
 
 Bluetooth Events
 ----------------
@@ -143,3 +146,4 @@ Various modules of the Bluetooth stack deliver events to applications via dedica
 * A2DP: :cpp:func:`esp_a2d_register_callback`, :cpp:type:`esp_a2d_cb_event_t`, :cpp:type:`esp_a2d_cb_param_t`.
 * AVRC: :cpp:func:`esp_avrc_ct_register_callback`, :cpp:type:`esp_avrc_ct_cb_event_t`, :cpp:type:`esp_avrc_ct_cb_param_t`.
 * HFP Client: :cpp:func:`esp_hf_client_register_callback`, :cpp:type:`esp_hf_client_cb_event_t`, :cpp:type:`esp_hf_client_cb_param_t`.
+* HFP AG: :cpp:func:`esp_hf_ag_register_callback`, :cpp:type:`esp_hf_ag_cb_event_t`, :cpp:type:`esp_hf_ag_cb_param_t`.

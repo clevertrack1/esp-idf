@@ -13,7 +13,7 @@ The example starts two FreeRTOS tasks:
 
 ### Hardware Required
 
-The example can be run on any commonly available ESP32 development board. You will need a USB cable to connect the
+The example can be run on any commonly available ESP32, ESP32-S and ESP32-C series based development board. You will need a USB cable to connect the
 development board to a computer, and a simple one-wire cable for shorting two pins of the board.
 
 ### Setup the Hardware
@@ -26,21 +26,11 @@ order to receive back the same data which were sent out.
 ```
 idf.py menuconfig
 ```
-or
-```
-idf.py menuconfig
-```
-
-* Set serial port under Serial Flasher Options.
 
 ### Build and Flash
 
 Build the project and flash it to the board, then run monitor tool to view serial output:
 
-```
-idf.py -p PORT flash monitor
-```
-or
 ```
 idf.py -p PORT flash monitor
 ```

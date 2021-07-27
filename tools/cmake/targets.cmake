@@ -27,6 +27,13 @@ macro(__target_init)
 
     # Finally, set IDF_TARGET in cache
     set(IDF_TARGET ${env_idf_target} CACHE STRING "IDF Build Target")
+
+    # Check if IDF_ENV_FPGA environment is set
+    set(env_idf_env_fpga $ENV{IDF_ENV_FPGA})
+    if(${env_idf_env_fpga})
+        idf_build_set_property(__IDF_ENV_FPGA "y")
+        message(NOTICE "IDF_ENV_FPGA is set, building for FPGA environment")
+    endif()
 endmacro()
 
 #
@@ -37,7 +44,7 @@ function(__target_check)
     idf_build_get_property(idf_target IDF_TARGET)
     if(NOT ${idf_target} STREQUAL ${CONFIG_IDF_TARGET})
         message(FATAL_ERROR "CONFIG_IDF_TARGET in sdkconfig does not match "
-            "IDF_TARGET environement variable. To change the target, delete "
+            "IDF_TARGET environment variable. To change the target, delete "
             "sdkconfig file and build the project again.")
     endif()
 endfunction()

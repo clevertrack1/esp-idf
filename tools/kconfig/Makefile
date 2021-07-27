@@ -311,7 +311,7 @@ ifeq ($(MAKECMDGOALS),gconfig)
 	fi
 endif
 
-zconf.tab.o: zconf.lex.c zconf.hash.c
+zconf.tab.o: zconf.lex.c zconf.hash.c zconf.tab.c
 
 qconf.o: qconf.moc
 
@@ -349,4 +349,3 @@ clean:
 	rm -f $(clean-files)
 
 -include $(all-deps)
-

@@ -21,6 +21,10 @@
 
 #include "supplicant_opt.h"
 
+#define AES_SMALL_TABLES
+#define CONFIG_NO_RANDOM_POOL
+#define CONFIG_INTERNAL_LIBTOMMATH
+
 /* Include possible build time configuration before including anything else */
 #ifndef __ets__
 #include <stdlib.h>
@@ -54,8 +58,11 @@
 #endif /* CONFIG_NATIVE_WINDOWS */
 
 #else
-
-#include "esp32/rom/ets_sys.h"
+#if CONFIG_IDF_TARGET_ESP32
+#include "esp32/rom/ets_sys.h" // will be removed in idf v5.0
+#elif CONFIG_IDF_TARGET_ESP32S2
+#include "esp32s2/rom/ets_sys.h"
+#endif
 
 #endif /* !__ets__ */
 

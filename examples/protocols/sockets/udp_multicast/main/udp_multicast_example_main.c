@@ -16,7 +16,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
-#include "tcpip_adapter.h"
+#include "esp_netif.h"
 #include "protocol_examples_common.h"
 
 #include "lwip/err.h"
@@ -62,8 +62,8 @@ static int socket_add_ipv4_multicast_group(int sock, bool assign_source_if)
 #if LISTEN_ALL_IF
     imreq.imr_interface.s_addr = IPADDR_ANY;
 #else
-    tcpip_adapter_ip_info_t ip_info = { 0 };
-    err = tcpip_adapter_get_ip_info(EXAMPLE_INTERFACE, &ip_info);
+    esp_netif_ip_info_t ip_info = { 0 };
+    err = esp_netif_get_ip_info(get_example_netif(), &ip_info);
     if (err != ESP_OK) {
         ESP_LOGE(V4TAG, "Failed to get IP address info. Error 0x%x", err);
         goto err;
@@ -203,7 +203,7 @@ static int create_multicast_ipv6_socket(void)
     // (Note the interface may have other non-LL IPV6 addresses as well,
     // but it doesn't matter in this context as the address is only
     // used to identify the interface.)
-    err = tcpip_adapter_get_ip6_linklocal(EXAMPLE_INTERFACE, &if_ipaddr);
+    err = esp_netif_get_ip6_linklocal(EXAMPLE_INTERFACE, (esp_ip6_addr_t*)&if_ipaddr);
     inet6_addr_from_ip6addr(&if_inaddr, &if_ipaddr);
     if (err != ESP_OK) {
         ESP_LOGE(V6TAG, "Failed to get IPV6 LL address. Error 0x%x", err);
@@ -212,7 +212,7 @@ static int create_multicast_ipv6_socket(void)
 #endif // LISTEN_ALL_IF
 
     // search for netif index
-    netif_index = tcpip_adapter_get_netif_index(EXAMPLE_INTERFACE);
+    netif_index = esp_netif_get_netif_impl_index(EXAMPLE_INTERFACE);
     if(netif_index < 0) {
         ESP_LOGE(V6TAG, "Failed to get netif index");
         goto err;
@@ -364,7 +364,7 @@ static void mcast_example_task(void *pvParameters)
                     char recvbuf[48];
                     char raddr_name[32] = { 0 };
 
-                    struct sockaddr_in6 raddr; // Large enough for both IPv4 or IPv6
+                    struct sockaddr_storage raddr; // Large enough for both IPv4 or IPv6
                     socklen_t socklen = sizeof(raddr);
                     int len = recvfrom(sock, recvbuf, sizeof(recvbuf)-1, 0,
                                        (struct sockaddr *)&raddr, &socklen);
@@ -376,14 +376,14 @@ static void mcast_example_task(void *pvParameters)
 
                     // Get the sender's address as a string
 #ifdef CONFIG_EXAMPLE_IPV4
-                    if (raddr.sin6_family == PF_INET) {
-                        inet_ntoa_r(((struct sockaddr_in *)&raddr)->sin_addr.s_addr,
+                    if (raddr.ss_family == PF_INET) {
+                        inet_ntoa_r(((struct sockaddr_in *)&raddr)->sin_addr,
                                     raddr_name, sizeof(raddr_name)-1);
                     }
 #endif
 #ifdef CONFIG_EXAMPLE_IPV6
-                    if (raddr.sin6_family == PF_INET6) {
-                        inet6_ntoa_r(raddr.sin6_addr, raddr_name, sizeof(raddr_name)-1);
+                    if (raddr.ss_family== PF_INET6) {
+                        inet6_ntoa_r(((struct sockaddr_in6 *)&raddr)->sin6_addr, raddr_name, sizeof(raddr_name)-1);
                     }
 #endif
                     ESP_LOGI(TAG, "received %d bytes from %s:", len, raddr_name);
@@ -484,7 +484,7 @@ static void mcast_example_task(void *pvParameters)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
-    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.

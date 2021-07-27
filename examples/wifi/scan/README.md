@@ -1,11 +1,88 @@
-# Wifi SCAN Example
+# Wi-Fi Scan Example
 
-This example shows how to use the scan functionality of the Wi-Fi driver of ESP32.
+(See the README.md file in the upper level 'examples' directory for more information about examples.)
 
-Two scan methods are supported: fast scan and all channel scan.
+This example shows how to scan for available set of APs.
 
-* fast scan: in this mode, scan finishes right after a matching AP is detected, even if channels are not completely scanned. You can set thresholds for signal strength, as well as select desired authentication modes provided by the AP's. The Wi-Fi driver will ignore AP's that fail to meet mentioned criteria.
+## How to use example
 
-* all channel scan: scan will end only after all channels are scanned; the Wi-Fi driver will store 4 of the fully matching AP's. Sort methods for AP's include rssi and authmode. After the scan, the Wi-Fi driver selects the AP that fits best based on the sort.
+Before project configuration and build, be sure to set the correct chip target using `idf.py set-target <chip_name>`.
 
-After the scan, the Wi-Fi driver will try to connect. Because it needs to to allocate precious dynamic memory to store matching AP's, and, most of the cases, connect to the AP with the strongest reception, it does not need to record all the AP's matched. The number of matches stored is limited to 4 in order to limit dynamic memory usage. Among the 4 matches,  AP's are allowed to carry the same SSID name and all possible authentication modes - Open, WEP, WPA and WPA2.
+### Hardware Required
+
+* A development board with ESP32/ESP32-S2/ESP32-C3 SoC (e.g., ESP32-DevKitC, ESP-WROVER-KIT, etc.).
+* A USB cable for Power supply and programming.
+
+### Configure the project
+
+Open the project configuration menu (`idf.py menuconfig`). 
+
+In the `Example Configuration` menu:
+
+* Set the Example configuration.
+    * Use `Max size of scan list` to set the maximum nunber of access points in the list.
+
+### Build and Flash
+
+Build the project and flash it to the board, then run the monitor tool to view the serial output:
+
+Run `idf.py -p PORT flash monitor` to build, flash and monitor the project.
+
+(To exit the serial monitor, type ``Ctrl-]``.)
+
+See the Getting Started Guide for all the steps to configure and use the ESP-IDF to build projects.
+
+* [ESP-IDF Getting Started Guide on ESP32](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html)
+* [ESP-IDF Getting Started Guide on ESP32-S2](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
+* [ESP-IDF Getting Started Guide on ESP32-C3](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/index.html)
+
+## Example Output
+
+As you run the example, you will see the following log:
+
+```
+I (443) wifi:wifi firmware version: 6bff005
+I (443) wifi:wifi certification version: v7.0
+I (443) wifi:config NVS flash: enabled
+I (443) wifi:config nano formating: disabled
+I (453) wifi:Init data frame dynamic rx buffer num: 32
+I (453) wifi:Init management frame dynamic rx buffer num: 32
+I (463) wifi:Init management short buffer num: 32
+I (463) wifi:Init dynamic tx buffer num: 32
+I (473) wifi:Init static tx FG buffer num: 2
+I (473) wifi:Init static rx buffer size: 1600
+I (473) wifi:Init static rx buffer num: 10
+I (483) wifi:Init dynamic rx buffer num: 32
+I (483) wifi_init: rx ba win: 6
+I (493) wifi_init: tcpip mbox: 32
+I (493) wifi_init: udp mbox: 6
+I (493) wifi_init: tcp mbox: 6
+I (503) wifi_init: tcp tx win: 5744
+I (503) wifi_init: tcp rx win: 5744
+I (513) wifi_init: tcp mss: 1440
+I (513) wifi_init: WiFi IRAM OP enabled
+I (513) wifi_init: WiFi RX IRAM OP enabled
+I (533) phy_init: phy_version 300,6e46ba7,Jan 25 2021
+I (683) wifi:set rx active PTI: 0, rx ack PTI: 0, and default PTI: 0
+I (683) wifi:mode : sta (7c:df:a1:40:23:84)
+I (683) wifi:enable tsf
+I (2783) scan: Total APs scanned = 17
+I (2783) scan: SSID 		IoTNetwork
+I (2783) scan: RSSI 		-50
+I (2783) scan: Authmode 	WIFI_AUTH_WPA2_PSK
+I (2783) scan: Pairwise Cipher 	WIFI_CIPHER_TYPE_CCMP
+I (2793) scan: Group Cipher 	WIFI_CIPHER_TYPE_CCMP
+I (2793) scan: Channel 		5
+
+I (2883) scan: SSID 		TP-Link_6872
+I (2883) scan: RSSI 		-70
+I (2883) scan: Authmode 	WIFI_AUTH_WPA_WPA2_PSK
+I (2893) scan: Pairwise Cipher 	WIFI_CIPHER_TYPE_CCMP
+I (2893) scan: Group Cipher 	WIFI_CIPHER_TYPE_CCMP
+I (2903) scan: Channel 		11
+...
+```
+
+## Troubleshooting
+
+For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.

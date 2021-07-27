@@ -394,6 +394,8 @@ void bta_gattc_co_cache_addr_init(void)
         return;
     }
 
+    memset(cache_env, 0x0, sizeof(cache_env_t));
+
     if ((err_code = nvs_open(cache_addr, NVS_READWRITE, &fp)) == ESP_OK) {
         cache_env->addr_fp = fp;
         cache_env->is_open = TRUE;
@@ -664,4 +666,3 @@ BOOLEAN bta_gattc_co_cache_clear_assoc_addr(BD_ADDR src_addr)
 // #endif /* #if( defined GATTC_CACHE_NVS ) && (GATTC_CACHE_NVS == TRUE) */
 #endif /* #if( defined BLE_INCLUDED ) && (BLE_INCLUDED == TRUE) */
 #endif /* #if( defined BTA_GATT_INCLUDED ) && (BTA_GATT_INCLUDED == TRUE) */
-

@@ -20,7 +20,7 @@ For a more comprehensive example please refer to `system/select`.
 
 ### Hardware Required
 
-The example can be run on any ESP32 development board connected to a PC with a single USB cable for communication
+The example can be run on any ESP32, ESP32-S and ESP32-C series based development board connected to a computer with a single USB cable for communication
 through UART.
 
 ### Configure the project
@@ -28,21 +28,11 @@ through UART.
 ```
 idf.py menuconfig
 ```
-or
-```
-idf.py menuconfig
-```
-
-* Set serial port under Serial Flasher Options.
 
 ### Build and Flash
 
 Build the project and flash it to the board, then run monitor tool to view serial output:
 
-```
-idf.py -p PORT flash monitor
-```
-or
 ```
 idf.py -p PORT flash monitor
 ```

@@ -68,6 +68,21 @@ bool list_contains(const list_t *list, const void *data)
   return false;
 }
 
+list_node_t *list_get_node(const list_t *list, const void *data)
+{
+  assert(list != NULL);
+  assert(data != NULL);
+  list_node_t *p_node_ret = NULL;
+  for (list_node_t *node = list_begin(list); node != list_end(list); node = list_next(node)) {
+    if (list_node(node) == data) {
+      p_node_ret = node;
+      break;
+    }
+  }
+
+  return p_node_ret;
+}
+
 size_t list_length(const list_t *list)
 {
     assert(list != NULL);
@@ -102,6 +117,7 @@ bool list_insert_after(list_t *list, list_node_t *prev_node, void *data) {
     assert(data != NULL);
     list_node_t *node = (list_node_t *)osi_calloc(sizeof(list_node_t));
     if (!node) {
+        OSI_TRACE_ERROR("%s osi_calloc failed.\n", __FUNCTION__ );
         return false;
     }
     node->next = prev_node->next;
@@ -120,6 +136,7 @@ bool list_prepend(list_t *list, void *data)
     assert(data != NULL);
     list_node_t *node = (list_node_t *)osi_calloc(sizeof(list_node_t));
     if (!node) {
+        OSI_TRACE_ERROR("%s osi_calloc failed.\n", __FUNCTION__ );
         return false;
     }
     node->next = list->head;
@@ -138,6 +155,7 @@ bool list_append(list_t *list, void *data)
     assert(data != NULL);
     list_node_t *node = (list_node_t *)osi_calloc(sizeof(list_node_t));
     if (!node) {
+        OSI_TRACE_ERROR("%s osi_calloc failed.\n", __FUNCTION__ );
         return false;
     }
     node->next = NULL;
@@ -174,6 +192,36 @@ bool list_remove(list_t *list, void *data)
     for (list_node_t *prev = list->head, *node = list->head->next; node; prev = node, node = node->next)
         if (node->data == data) {
             prev->next = list_free_node(list, node);
+            if (list->tail == node) {
+                list->tail = prev;
+            }
+            return true;
+        }
+
+    return false;
+}
+
+bool list_delete(list_t *list, void *data)
+{
+    assert(list != NULL);
+    assert(data != NULL);
+
+    if (list_is_empty(list)) {
+        return false;
+    }
+
+    if (list->head->data == data) {
+        list_node_t *next = list_delete_node(list, list->head);
+        if (list->tail == list->head) {
+            list->tail = next;
+        }
+        list->head = next;
+        return true;
+    }
+
+    for (list_node_t *prev = list->head, *node = list->head->next; node; prev = node, node = node->next)
+        if (node->data == data) {
+            prev->next = list_delete_node(list, node);
             if (list->tail == node) {
                 list->tail = prev;
             }
@@ -243,6 +291,20 @@ list_node_t *list_free_node(list_t *list, list_node_t *node)
     if (list->free_cb) {
         list->free_cb(node->data);
     }
+    osi_free(node);
+    --list->length;
+
+    return next;
+}
+
+// remove the element from list but do not free the node data
+list_node_t *list_delete_node(list_t *list, list_node_t *node)
+{
+    assert(list != NULL);
+    assert(node != NULL);
+
+    list_node_t *next = node->next;
+
     osi_free(node);
     --list->length;
 

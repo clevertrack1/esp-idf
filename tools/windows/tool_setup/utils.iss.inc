@@ -1,4 +1,4 @@
-{ Copyright 2019 Espressif Systems (Shanghai) PTE LTD
+{ Copyright 2019-2020 Espressif Systems (Shanghai) CO LTD
   SPDX-License-Identifier: Apache-2.0 }
 
 { ------------------------------ Helper functions from libcmdlinerunner.dll ------------------------------ }
@@ -92,7 +92,7 @@ end;
 type
     TFindFileCallback = procedure(Filename: String);
 
-procedure FindFileRecusive(Directory: string; FileName: string; Callback: TFindFileCallback);
+procedure FindFileRecursive(Directory: string; FileName: string; Callback: TFindFileCallback);
 var
   FindRec: TFindRec;
   FilePath: string;
@@ -107,7 +107,7 @@ begin
         FilePath := Directory + '\' + FindRec.Name;
         if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
         begin
-          FindFileRecusive(FilePath, FileName, Callback);
+          FindFileRecursive(FilePath, FileName, Callback);
         end else if CompareText(FindRec.Name, FileName) = 0 then
         begin
           Callback(FilePath);
@@ -144,7 +144,7 @@ begin
   Delete(MinorStr, Delim, Length(MinorStr));
   Delete(Version, 1, Delim);
   Minor := StrToInt(MinorStr);
-  
+
   { Sanity check }
   ExpectedPrefix := IntToStr(Major) + '.' + IntToStr(Minor);
   if Pos(ExpectedPrefix, OrigVersion) <> 1 then

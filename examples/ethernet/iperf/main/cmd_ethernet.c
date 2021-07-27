@@ -10,20 +10,25 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
-#include "tcpip_adapter.h"
+#include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "esp_event.h"
 #include "esp_eth.h"
+#include "driver/gpio.h"
 #include "argtable3/argtable3.h"
 #include "iperf.h"
 #include "sdkconfig.h"
+#if CONFIG_ETH_USE_SPI_ETHERNET
+#include "driver/spi_master.h"
+#endif // CONFIG_ETH_USE_SPI_ETHERNET
 
-static tcpip_adapter_ip_info_t ip;
+static esp_netif_ip_info_t ip;
 static bool started = false;
 static EventGroupHandle_t eth_event_group;
 static const int GOTIP_BIT = BIT0;
 static esp_eth_handle_t eth_handle = NULL;
+static esp_netif_t *eth_netif = NULL;
 
 /* "ethernet" command */
 static struct {
@@ -43,7 +48,7 @@ static int eth_cmd_control(int argc, char **argv)
         uint8_t mac_addr[6];
         esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
         printf("HW ADDR: " MACSTR "\r\n", MAC2STR(mac_addr));
-        tcpip_adapter_get_ip_info(ESP_IF_ETH, &ip);
+        esp_netif_get_ip_info(eth_netif, &ip);
         printf("ETHIP: " IPSTR "\r\n", IP2STR(&ip.ip));
         printf("ETHMASK: " IPSTR "\r\n", IP2STR(&ip.netmask));
         printf("ETHGW: " IPSTR "\r\n", IP2STR(&ip.gw));
@@ -94,7 +99,7 @@ static int eth_cmd_iperf(int argc, char **argv)
     }
     /* iperf -c SERVER_ADDRESS */
     else {
-        cfg.dip = ipaddr_addr(iperf_args.ip->sval[0]);
+        cfg.dip = esp_ip4addr_aton(iperf_args.ip->sval[0]);
         cfg.flag |= IPERF_FLAG_CLIENT;
     }
 
@@ -176,15 +181,21 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 void register_ethernet(void)
 {
     eth_event_group = xEventGroupCreate();
-    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
+    esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
+    eth_netif = esp_netif_new(&cfg);
+    ESP_ERROR_CHECK(esp_eth_set_default_handlers(eth_netif));
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &event_handler, NULL));
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+    phy_config.phy_addr = CONFIG_EXAMPLE_ETH_PHY_ADDR;
+    phy_config.reset_gpio_num = CONFIG_EXAMPLE_ETH_PHY_RST_GPIO;
 #if CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
+    mac_config.smi_mdc_gpio_num = CONFIG_EXAMPLE_ETH_MDC_GPIO;
+    mac_config.smi_mdio_gpio_num = CONFIG_EXAMPLE_ETH_MDIO_GPIO;
     esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
 #if CONFIG_EXAMPLE_ETH_PHY_IP101
     esp_eth_phy_t *phy = esp_eth_phy_new_ip101(&phy_config);
@@ -194,34 +205,64 @@ void register_ethernet(void)
     esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
 #elif CONFIG_EXAMPLE_ETH_PHY_DP83848
     esp_eth_phy_t *phy = esp_eth_phy_new_dp83848(&phy_config);
+#elif CONFIG_EXAMPLE_ETH_PHY_KSZ8041
+    esp_eth_phy_t *phy = esp_eth_phy_new_ksz8041(&phy_config);
 #endif
-#elif CONFIG_EXAMPLE_USE_SPI_ETHERNET
+#elif CONFIG_ETH_USE_SPI_ETHERNET
     gpio_install_isr_service(0);
     spi_device_handle_t spi_handle = NULL;
     spi_bus_config_t buscfg = {
-        .miso_io_num = CONFIG_EXAMPLE_ETH_MISO_GPIO,
-        .mosi_io_num = CONFIG_EXAMPLE_ETH_MOSI_GPIO,
-        .sclk_io_num = CONFIG_EXAMPLE_ETH_SCLK_GPIO,
+        .miso_io_num = CONFIG_EXAMPLE_ETH_SPI_MISO_GPIO,
+        .mosi_io_num = CONFIG_EXAMPLE_ETH_SPI_MOSI_GPIO,
+        .sclk_io_num = CONFIG_EXAMPLE_ETH_SPI_SCLK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(CONFIG_EXAMPLE_ETH_SPI_HOST, &buscfg, 1));
+#if CONFIG_EXAMPLE_USE_DM9051
     spi_device_interface_config_t devcfg = {
         .command_bits = 1,
         .address_bits = 7,
         .mode = 0,
         .clock_speed_hz = CONFIG_EXAMPLE_ETH_SPI_CLOCK_MHZ * 1000 * 1000,
-        .spics_io_num = CONFIG_EXAMPLE_ETH_CS_GPIO,
+        .spics_io_num = CONFIG_EXAMPLE_ETH_SPI_CS_GPIO,
         .queue_size = 20
     };
     ESP_ERROR_CHECK(spi_bus_add_device(CONFIG_EXAMPLE_ETH_SPI_HOST, &devcfg, &spi_handle));
-    /* dm9051 ethernet driver is based on spi driver, so need to specify the spi handle */
-    mac_config.spi_hdl = spi_handle;
-    esp_eth_mac_t *mac = esp_eth_mac_new_dm9051(&mac_config);
+    /* dm9051 ethernet driver is based on spi driver */
+    eth_dm9051_config_t dm9051_config = ETH_DM9051_DEFAULT_CONFIG(spi_handle);
+    dm9051_config.int_gpio_num = CONFIG_EXAMPLE_ETH_SPI_INT_GPIO;
+    esp_eth_mac_t *mac = esp_eth_mac_new_dm9051(&dm9051_config, &mac_config);
     esp_eth_phy_t *phy = esp_eth_phy_new_dm9051(&phy_config);
+#elif CONFIG_EXAMPLE_USE_W5500
+    spi_device_interface_config_t devcfg = {
+        .command_bits = 16, // Actually it's the address phase in W5500 SPI frame
+        .address_bits = 8,  // Actually it's the control phase in W5500 SPI frame
+        .mode = 0,
+        .clock_speed_hz = CONFIG_EXAMPLE_ETH_SPI_CLOCK_MHZ * 1000 * 1000,
+        .spics_io_num = CONFIG_EXAMPLE_ETH_SPI_CS_GPIO,
+        .queue_size = 20
+    };
+    ESP_ERROR_CHECK(spi_bus_add_device(CONFIG_EXAMPLE_ETH_SPI_HOST, &devcfg, &spi_handle));
+    /* w5500 ethernet driver is based on spi driver */
+    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(spi_handle);
+    w5500_config.int_gpio_num = CONFIG_EXAMPLE_ETH_SPI_INT_GPIO;
+    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
 #endif
+#endif // CONFIG_ETH_USE_SPI_ETHERNET
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
     ESP_ERROR_CHECK(esp_eth_driver_install(&config, &eth_handle));
+#if !CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET
+    /* The SPI Ethernet module might doesn't have a burned factory MAC address, we cat to set it manually.
+       02:00:00 is a Locally Administered OUI range so should not be used except when testing on a LAN under your control.
+    */
+    ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, (uint8_t[]) {
+        0x02, 0x00, 0x00, 0x12, 0x34, 0x56
+    }));
+#endif
+    ESP_ERROR_CHECK(esp_netif_attach(eth_netif, esp_eth_new_netif_glue(eth_handle)));
+    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
 
     eth_control_args.control = arg_str1(NULL, NULL, "<info>", "Get info of Ethernet");
     eth_control_args.end = arg_end(1);

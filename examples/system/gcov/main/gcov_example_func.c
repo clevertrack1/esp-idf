@@ -4,6 +4,5 @@
 void blink_dummy_func(void)
 {
     static int i;
-    printf("Counter = %d\n", i++);
+    printf("blink_dummy_func: Counter = %d\n", i++);
 }
-

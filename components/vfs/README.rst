@@ -1,6 +1,8 @@
 Virtual filesystem component
 ============================
 
+:link_to_translation:`zh_CN:[中文]`
+
 Overview
 --------
 
@@ -106,6 +108,10 @@ given VFS driver.
 :cpp:func:`end_select` is called to stop/deinitialize/free the
 environment which was setup by :cpp:func:`start_select`.
 
+.. note::
+    :cpp:func:`end_select` might be called without a previous :cpp:func:`start_select` call in some rare
+    circumstances. :cpp:func:`end_select` should fail gracefully if this is the case.
+
 Please refer to the
 reference implementation for the UART peripheral in
 :component_file:`vfs/vfs_uart.c` and most particularly to the functions
@@ -152,6 +158,10 @@ Please see :component_file:`lwip/port/esp32/vfs_lwip.c` for a reference socket d
 .. note::
     If you use :cpp:func:`select` for socket file descriptors only then you can enable the
     :envvar:`CONFIG_LWIP_USE_ONLY_LWIP_SELECT` option to reduce the code size and improve performance.
+
+.. note::
+    Don't change the socket driver during an active :cpp:func:`select` call or you might experience some undefined
+    behavior.
 
 Paths
 -----
@@ -200,7 +210,7 @@ By default, VFS uses simple functions for reading from and writing to UART. Writ
 
 Applications which use the UART driver can instruct VFS to use the driver's interrupt driven, blocking read and write functions instead. This can be done using a call to the ``esp_vfs_dev_uart_use_driver`` function. It is also possible to revert to the basic non-blocking functions using a call to ``esp_vfs_dev_uart_use_nonblocking``.
 
-VFS also provides an optional newline conversion feature for input and output. Internally, most applications send and receive lines terminated by the LF (''\n'') character. Different terminal programs may require different line termination, such as CR or CRLF. Applications can configure this separately for input and output either via menuconfig, or by calls to the functions ``esp_vfs_dev_uart_set_rx_line_endings`` and ``esp_vfs_dev_uart_set_tx_line_endings``.
+VFS also provides an optional newline conversion feature for input and output. Internally, most applications send and receive lines terminated by the LF (''\n'') character. Different terminal programs may require different line termination, such as CR or CRLF. Applications can configure this separately for input and output either via menuconfig, or by calls to the functions ``esp_vfs_dev_uart_port_set_rx_line_endings`` and ``esp_vfs_dev_uart_port_set_tx_line_endings``.
 
 
 
@@ -218,10 +228,21 @@ The following code is transferred to ``fprintf(__getreent()->_stderr, "42\n");``
     fprintf(stderr, "42\n");
 
 
-The ``__getreent()`` function returns a per-task pointer to ``struct _reent`` (:component_file:`newlib/include/sys/reent.h#L370-L417`). This structure is allocated on the TCB of each task. When a task is initialized, ``_stdin``, ``_stdout``, and ``_stderr`` members of ``struct _reent`` are set to the values of ``_stdin``, ``_stdout``, and ``_stderr`` of ``_GLOBAL_REENT`` (i.e., the structure which is used before FreeRTOS is started).
+The ``__getreent()`` function returns a per-task pointer to ``struct _reent`` in newlib libc. This structure is allocated on the TCB of each task. When a task is initialized, ``_stdin``, ``_stdout``, and ``_stderr`` members of ``struct _reent`` are set to the values of ``_stdin``, ``_stdout``, and ``_stderr`` of ``_GLOBAL_REENT`` (i.e., the structure which is used before FreeRTOS is started).
 
 Such a design has the following consequences:
 
 - It is possible to set ``stdin``, ``stdout``, and ``stderr`` for any given task without affecting other tasks, e.g., by doing ``stdin = fopen("/dev/uart/1", "r")``.
 - Closing default ``stdin``, ``stdout``, or ``stderr`` using ``fclose`` will close the ``FILE`` stream object, which will affect all other tasks.
 - To change the default ``stdin``, ``stdout``, ``stderr`` streams for new tasks, modify ``_GLOBAL_REENT->_stdin`` (``_stdout``, ``_stderr``) before creating the task.
+
+Event fds
+-------------------------------------------
+
+``eventfd()`` call is a powerful tool to notify a ``select()`` based loop of custom events. The ``eventfd()`` implementation in ESP-IDF is generally the same as described in ``man(2) eventfd`` except for:
+
+- ``esp_vfs_eventfd_register()`` has to be called before calling ``eventfd()``
+- Options ``EFD_CLOEXEC``, ``EFD_NONBLOCK`` and ``EFD_SEMAPHORE`` are not supported in flags.
+- Option ``EFD_SUPPORT_ISR`` has been added in flags. This flag is required to read and the write the eventfd in an interrupt handler.
+
+Note that creating an eventfd with ``EFD_SUPPORT_ISR`` will cause interrupts to be temporarily disabled when reading, writing the file and during the beginning and the ending of the ``select()`` when this file is set.

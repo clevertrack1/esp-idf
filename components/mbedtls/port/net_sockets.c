@@ -27,6 +27,8 @@
 #include MBEDTLS_CONFIG_FILE
 #endif
 
+#ifdef CONFIG_ESP_NETIF_TCPIP_LWIP
+
 #if !defined(MBEDTLS_NET_C)
 
 #if defined(MBEDTLS_PLATFORM_C)
@@ -197,14 +199,6 @@ int mbedtls_net_bind( mbedtls_net_context *ctx, const char *bind_ip, const char 
 static int net_would_block( const mbedtls_net_context *ctx )
 {
     int error = errno;
-
-    /*
-     * Never return 'WOULD BLOCK' on a non-blocking socket
-     */
-    if ( ( fcntl( ctx->fd, F_GETFL, 0) & O_NONBLOCK ) != O_NONBLOCK ) {
-        errno = error;
-        return ( 0 );
-    }
 
     switch ( errno = error ) {
 #if defined EAGAIN
@@ -449,3 +443,5 @@ void mbedtls_net_free( mbedtls_net_context *ctx )
 }
 
 #endif /* MBEDTLS_NET_C */
+
+#endif /* CONFIG_ESP_NETIF_TCPIP_LWIP */

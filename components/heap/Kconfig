@@ -45,6 +45,8 @@ menu "Heap memory debugging"
 
     config HEAP_TRACING_STACK_DEPTH
         int "Heap tracing stack depth"
+        range 0 0 if IDF_TARGET_ARCH_RISCV # Disabled for RISC-V due to `__builtin_return_address` limitation
+        default 0 if IDF_TARGET_ARCH_RISCV
         range 0 10
         default 2
         depends on HEAP_TRACING
@@ -62,5 +64,11 @@ menu "Heap memory debugging"
 
             This function depends on heap poisoning being enabled and adds four more bytes of overhead for each block
             allocated.
+
+    config HEAP_ABORT_WHEN_ALLOCATION_FAILS
+        bool "Abort if memory allocation fails"
+        default n
+        help
+            When enabled, if a memory allocation operation fails it will cause a system abort.
 
 endmenu

@@ -1,54 +1,115 @@
-**********************************************************
+***********************************************
 Windows 平台工具链的标准设置
-**********************************************************
+***********************************************
 
-:link_to_translation:`en:[英文]`
+:link_to_translation:`en:[English]`
 
-.. note::
-      基于 CMake 的构建系统仅支持 64 位版本 Windows。
+.. only:: esp32
 
-引言
+    .. 注解::
+	    目前，基于 CMake 的构建系统仅支持 64 位 Windows 版本。32 位 Windows 版本的用户可根据 :doc:`传统 GNU Make 构建系统<../get-started-legacy/windows-setup>` 中的介绍进行操作。
+
+概述
 ============
 
-ESP-IDF 需要安装必要的工具，以编译 ESP32 固件，包括：Git，交叉编译器，以及 CMake 构建工具。本文将对这些工具一一说明。
+ESP-IDF 需要安装一些必备工具，才能围绕 {IDF_TARGET_NAME} 构建固件，包括 Python、Git、交叉编译器、CMake 和 Ninja 编译工具等。
 
-在此入门指南中，我们通过命令提示符进行有关操作。不过，安装 ESP-IDF 后你还可以使用 :doc:`Eclipse <eclipse-setup>` 或支持 CMake 的图形化工具 IDE。
+在本入门指南中，我们通过 **命令提示符** 进行有关操作。不过，您在安装 ESP-IDF 后还可以使用 :doc:`Eclipse <eclipse-setup>` 或其他支持 CMake 的图形化工具 IDE。
 
-https://dl.espressif.com/dl/esp32_win32_msys2_environment_and_toolchain-20190611.zip
+.. only:: esp32
+
+    .. 注解::
+	    较早 ESP-IDF 版本使用 :doc:`传统 GNU Make 构建系统<../get-started-legacy/windows-setup>` 和 MSYS2_ Unix 兼容环境。但如今已非必需，用户可直接通过 Windows 命令提示符使用 ESP-IDF。
+
+.. note::
+    限定条件：
+    - 请注意 ESP-IDF 和 ESP-IDF 工具的安装路径不能超过 90 个字符，安装路径过长可能会导致构建失败。
+    - Python 或 ESP-IDF 的安装路径中一定不能包含空格或括号。
+    - 除非操作系统配置为支持 Unicode UTF-8，否则 Python 或 ESP-IDF 的安装路径中也不能包括特殊字符（非 ASCII 码字符）
+
+    系统管理员可以通过如下方式将操作系统配置为支持 Unicode UTF-8：控制面板-更改日期、时间或数字格式-管理选项卡-更改系统地域-勾选选项 “Beta：使用 Unicode UTF-8 支持全球语言”-点击确定-重启电脑。
+
+.. _get-started-windows-tools-installer:
 
 ESP-IDF 工具安装器
 =======================
 
-安装 ESP-IDF 必备工具最简易的方式是下载 ESP-IDF 工具安装器，地址如下：
+安装 ESP-IDF 必备工具最简易的方式是从 https://dl.espressif.com/dl/esp-idf/?idf=4.4 中下载 ESP-IDF 工具安装器。
 
-https://dl.espressif.com/dl/esp-idf-tools-setup-1.2.exe
+在线安装与离线安装的区别
+-----------------------------------------
 
-安装器会自动安装 ESP32 Xtensa gcc 工具链，Ninja_ 编译工具，以及名为 mconf-idf_ 的配置工具。此外，如果你的电脑还未安装有关 CMake_ 和 Python_ 2.7 的安装器，它还可以下载和运行与之对应的安装器。
+在线安装程序非常小，可以安装 ESP-IDF 的所有版本。在安装过程中，安装程序只下载必要的依赖文件，包括 `Git For Windows`_ 安装器。在线安装程序会将下载的文件存储在缓存目录 ``%userprofile%/espressif`` 中。
 
-安装器默认更新 Windows ``Path`` 环境变量，因而上述工具也可在其他环境中运行。如果禁止该选项，则需自行设置 ESP-IDF 所使用的环境（终端或所选 IDE），并配置正确的路径。 
+离线安装程序不需要任何网络连接。安装程序中包含了所有需要的依赖文件，包括 `Git For Windows`_ 安装器。
 
-请注意，此安装器仅针对 ESP-IDF 工具包，并不包括 ESP-IDF。
+安装内容
+------------
 
-安装 Git
-==============
+安装程序会安装以下组件：
 
-ESP-IDF 工具安装器并不会安装 Git，因为快速入门指南默认你将以命令行的模式使用它。你可以通过 `Git For Windows`_ 下载和安装 Windows 平台的命令行 Git 工具（包括 "Git Bash" 终端）。
+- 内置的 Python
+- 交叉编译器
+- OpenOCD
+- CMake_ 和 Ninja_ 编译工具
+- ESP-IDF
 
-如果你想使用其他图形化 Git 客户端，如 `Github Desktop`， 你可以自行安装，但需要对本《入门指南》中相应的 Git 命令进行转换，以便用于你所选的 Git 客户端。
+安装程序允许将程序下载到现有的 ESP-IDF 目录。推荐将 ESP-IDF 下载到 ``%userprofile%\Desktop\esp-idf`` 目录下，其中 ``%userprofile%`` 代表家目录。
 
-使用终端
-================
+启动 ESP-IDF 环境
+------------------
 
-在本《入门指南》接下来的步骤说明中，我们将使用终端命令提示符进行有关操作。你也可以使用任何其他形式的命令提示符：
+安装结束时，如果勾选了 ``Run ESP-IDF PowerShell Environment`` 或 ``Run ESP-IDF Command Prompt (cmd.exe)``，安装程序会在选定的提示符窗口启动 ESP-IDF。
 
-- 比如，Windows 开始菜单下内置的命令提示符。本文档中的所有 Windows 命令行指令均为 Windows 命令提示符中所使用的 "batch" 命令。
-- 你还可以使用 `Git for Windows`_ 中的 "Git Bash" 终端，其所使用的 "bash" 命令提示符语法与 Mac OS 或 Linux 的既定语法相同。安装此终端后，你可以在开始菜单下找到命令提示符窗口。
-- 如果你已安装 MSYS2_ （通过 ESP-IDF 之前版本），你还可以使用 MSYS 终端。
+``Run ESP-IDF PowerShell Environment``:
+
+.. figure:: ../../_static/esp-idf-installer-screenshot-powershell.png
+    :align: center
+    :alt: 完成 ESP-IDF 工具安装向导时运行 Run ESP-IDF PowerShell Environment
+    :figclass: align-center
+
+    完成 ESP-IDF 工具安装向导时运行 Run ESP-IDF PowerShell Environment
+
+.. figure:: ../../_static/esp-idf-installer-powershell.png
+    :align: center
+    :alt: ESP-IDF PowerShell
+    :figclass: align-center
+
+    ESP-IDF PowerShell
+
+``Run ESP-IDF Command Prompt (cmd.exe)``:
+
+.. figure:: ../../_static/esp-idf-installer-screenshot.png
+    :align: center
+    :alt: 完成 ESP-IDF 工具安装向导时运行 Run ESP-IDF Command Prompt (cmd.exe)
+    :figclass: align-center
+
+    完成 ESP-IDF 工具安装向导时运行 Run ESP-IDF Command Prompt (cmd.exe)
+
+.. figure:: ../../_static/esp-idf-installer-command-prompt.png
+    :align: center
+    :alt: ESP-IDF 命令提示符窗口
+    :figclass: align-center
+
+    ESP-IDF 命令提示符窗口
+
+使用命令提示符
+========================
+
+在后续步骤中，我们将使用 Windows 的命令提示符进行操作。
+
+ESP-IDF 工具安装器可在“开始”菜单中，创建一个打开 ESP-IDF 命令提示符窗口的快捷方式。本快捷方式可以打开 Windows 命令提示符（即 cmd.exe），并运行 ``export.bat`` 脚本以设置各环境变量（比如 ``PATH``，``IDF_PATH`` 等）。此外，您可还以通过 Windows 命令提示符使用各种已经安装的工具。
+
+注意，本快捷方式仅适用 ESP-IDF 工具安装器中指定的 ESP-IDF 路径。如果您的电脑上存在多个 ESP-IDF 路径（比如您需要不同版本的 ESP-IDF），您有以下两种解决方法：
+
+1. 为 ESP-IDF 工具安装器创建的快捷方式创建一个副本，并将新快捷方式的 ESP-IDF 工作路径指定为您希望使用的 ESP-IDF 路径。
+
+2. 或者，您可以运行 ``cmd.exe``，并切换至您希望使用的 ESP-IDF 目录，然后运行 ``export.bat``。注意，这种方法要求 ``PATH`` 中存在 Python 和 Git。如果您在使用时遇到有关“找不到 Python 或 Git”的错误信息，请使用第一种方法。
 
 后续步骤
-==========
+============
 
-要继续设置开发环境，请参照 :ref:`get-started-get-esp-idf`。
+当 ESP-IDF 工具安装器安装成功后，开发环境设置也到此结束。后续开发步骤，请前往 :ref:`get-started-start-project` 查看。
 
 相关文档
 =================
@@ -58,13 +119,12 @@ ESP-IDF 工具安装器并不会安装 Git，因为快速入门指南默认你�
 .. toctree::
     :maxdepth: 1
 
-    windows-setup-scratch
+    windows-setup-update
 
 
-.. _MSYS2: https://msys2.github.io/
-.. _cmake: https://cmake.org/download/
-.. _ninja: https://ninja-build.org/
+.. _MSYS2: https://www.msys2.org/
+.. _CMake: https://cmake.org/download/
+.. _Ninja: https://ninja-build.org/
 .. _Python: https://www.python.org/downloads/windows/
 .. _Git for Windows: https://gitforwindows.org/
-.. _mconf-idf: https://github.com/espressif/kconfig-frontends/releases/
 .. _Github Desktop: https://desktop.github.com/

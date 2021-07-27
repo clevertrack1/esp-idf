@@ -4,15 +4,14 @@
 
 #include <esp_types.h>
 #include <stdio.h>
-#include "esp32/rom/ets_sys.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
-#include "freertos/xtensa_api.h"
 #include "unity.h"
 #include "soc/cpu.h"
+#include "hal/cpu_hal.h"
 
 #include "test_utils.h"
 
@@ -21,11 +20,11 @@
 static uint32_t start, end;
 
 #define BENCHMARK_START() do {                  \
-        RSR(CCOUNT, start);                     \
+        start = cpu_hal_get_cycle_count();                     \
     } while(0)
 
 #define BENCHMARK_END(OPERATION) do {                       \
-        RSR(CCOUNT, end);                                           \
+        end = cpu_hal_get_cycle_count();                                          \
         printf("%s took %d cycles/op (%d cycles for %d ops)\n",     \
                OPERATION, (end - start)/REPEAT_OPS,                 \
                (end - start), REPEAT_OPS);                          \
@@ -45,7 +44,7 @@ TEST_CASE("portMUX spinlocks (no contention)", "[freertos]")
 #ifdef CONFIG_FREERTOS_UNICORE
     TEST_PERFORMANCE_LESS_THAN(FREERTOS_SPINLOCK_CYCLES_PER_OP_UNICORE, "%d cycles/op", ((end - start)/REPEAT_OPS));
 #else
-#if CONFIG_ESP32_SPIRAM_SUPPORT
+#if CONFIG_SPIRAM
     TEST_PERFORMANCE_LESS_THAN(FREERTOS_SPINLOCK_CYCLES_PER_OP_PSRAM, "%d cycles/op", ((end - start)/REPEAT_OPS));
 #else
     TEST_PERFORMANCE_LESS_THAN(FREERTOS_SPINLOCK_CYCLES_PER_OP, "%d cycles/op", ((end - start)/REPEAT_OPS));
@@ -142,4 +141,3 @@ TEST_CASE("portMUX high contention", "[freertos]")
 }
 
 #endif // portNUM_PROCESSORS == 2
-

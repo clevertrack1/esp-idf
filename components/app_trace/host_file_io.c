@@ -1,16 +1,8 @@
-// Copyright 2017 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2017-2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 //
 // Hot It Works
 // ************
@@ -25,9 +17,8 @@
 #include <string.h>
 #include "esp_app_trace.h"
 
-#if CONFIG_ESP32_APPTRACE_ENABLE
+#if CONFIG_APPTRACE_ENABLE
 
-#define LOG_LOCAL_LEVEL CONFIG_LOG_DEFAULT_LEVEL
 #include "esp_log.h"
 const static char *TAG = "esp_host_file_io";
 
@@ -146,7 +137,7 @@ void *esp_apptrace_fopen(esp_apptrace_dest_t dest, const char *path, const char 
 
     ESP_EARLY_LOGV(TAG, "esp_apptrace_fopen '%s' '%s'", path, mode);
     if (path == NULL || mode == NULL) {
-        return 0;        
+        return 0;
     }
 
     cmd_args.path = path;
@@ -217,7 +208,7 @@ size_t esp_apptrace_fwrite(esp_apptrace_dest_t dest, const void *ptr, size_t siz
     ESP_EARLY_LOGV(TAG, "esp_apptrace_fwrite f %p l %d", stream, size*nmemb);
 
     if (ptr == NULL) {
-        return 0;        
+        return 0;
     }
 
     cmd_args.buf = (void *)ptr;
@@ -256,7 +247,7 @@ size_t esp_apptrace_fread(esp_apptrace_dest_t dest, void *ptr, size_t size, size
     ESP_EARLY_LOGV(TAG, "esp_apptrace_fread f %p l %d", stream, size*nmemb);
 
     if (ptr == NULL) {
-        return 0;        
+        return 0;
     }
 
     cmd_args.size = size * nmemb;

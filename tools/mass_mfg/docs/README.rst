@@ -1,6 +1,8 @@
 Manufacturing Utility
 =====================
 
+:link_to_translation:`zh_CN:[中文]`
+
 Introduction
 ------------
 
@@ -8,9 +10,9 @@ This utility is designed to create instances of factory NVS partition images on 
 
 Please note that this utility only creates manufacturing binary images which then need to be flashed onto your devices using:
 
-- esptool.py
-- Flash Download tool (available on Windows only)
-- Direct flash programming
+- `esptool.py`_
+- `Flash Download tool`_ (available on Windows only).Just download it, unzip, and follow the instructions inside the *doc* folder.
+- Direct flash programming using custom production tools.
 
 
 Prerequisites
@@ -22,7 +24,7 @@ Prerequisites
 	-	Linux / MacOS / Windows (standard distributions)
 
 * The following packages are needed to use this utility:
-	-	Python version: 2.7 (minimum) is required. You can find it here: <https://www.python.org/downloads/>
+	-	`Python <https://www.python.org/downloads/>`_
 
 .. note::
 
@@ -34,7 +36,7 @@ Prerequisites
 Workflow
 --------
 
-.. blockdiag:: 
+.. blockdiag::
 
     blockdiag {
     A [label = "CSV Configuration file"];
@@ -49,13 +51,13 @@ CSV Configuration File
 ----------------------
 
 This file contains the configuration of the device to be flashed.
-  
-The data in the configuration file has the following format (the `REPEAT` tag is optional):: 
+
+The data in the configuration file has the following format (the `REPEAT` tag is optional)::
 
        name1,namespace,	   <-- First entry should be of type "namespace"
        key1,type1,encoding1
        key2,type2,encoding2,REPEAT
-       name2,namespace,	   
+       name2,namespace,
        key3,type3,encoding3
        key4,type4,encoding4
 
@@ -86,11 +88,11 @@ Master Value CSV File
 ---------------------
 
 This file contains details of the devices to be flashed. Each line in this file corresponds to a device instance.
-  
+
 The data in the master value CSV file has the following format::
 
 	key1,key2,key3,.....
-	value1,value2,value3,.... 
+	value1,value2,value3,....
 
 .. note:: The first line in the file should always contain the ``key`` names. All the keys from the configuration file should be present here in the **same order**. This file can have additional columns (keys). The additional keys will be treated as metadata and would not be part of the final binary files.
 
@@ -105,10 +107,10 @@ Data value is the value of data corresponding to the key.
 
 Below is a sample example of a master value CSV file::
 
-	id,firmware_key,serial_no,device_no 
-	1,1a2b3c4d5e6faabb,A1,101 
-	2,1a2b3c4d5e6fccdd,,102 
-	3,1a2b3c4d5e6feeff,,103 
+	id,firmware_key,serial_no,device_no
+	1,1a2b3c4d5e6faabb,A1,101
+	2,1a2b3c4d5e6fccdd,,102
+	3,1a2b3c4d5e6feeff,,103
 
 .. note:: *If the 'REPEAT' tag is present, a new master value CSV file will be created in the same folder as the input Master CSV File with the values inserted at each line for the key with the 'REPEAT' tag*.
 
@@ -155,16 +157,16 @@ Running the utility
                                         [--keyfile KEYFILE] [--inputkey INPUTKEY]
                                         [--outdir OUTDIR]
                                         conf values prefix size
-        
+
         Positional Arguments:
         +--------------+----------------------------------------------------------------------+
         | Parameter    |                           Description                                |
         +==============+======================================================================+
-        | conf         |        Path to configuration csv file to parse                       | 
+        | conf         |        Path to configuration csv file to parse                       |
         +--------------+----------------------------------------------------------------------+
         | values       |        Path to values csv file to parse                              |
         +--------------+----------------------------------------------------------------------+
-        | prefix       |        Unique name for each output filename prefix                   |                          
+        | prefix       |        Unique name for each output filename prefix                   |
         +-----+--------------+----------------------------------------------------------------+
         | size         |        Size of NVS partition in bytes                                |
         |              |        (must be multiple of 4096)                                    |
@@ -194,7 +196,7 @@ Running the utility
 
 You can run the utility to generate factory images for each device using the command below. A sample CSV file is provided with the utility::
 
-    python mfg_gen.py generate samples/sample_config.csmples/sample_values_singlepage_blob.csv Sample 0x3000
+    python mfg_gen.py generate samples/sample_config.csv samples/sample_values_singlepage_blob.csv Sample 0x3000
 
 The master value CSV file should have the path in the ``file`` type relative to the directory from which you are running the utility.
 
@@ -229,7 +231,7 @@ You can run the utility to encrypt factory images for each device using the comm
         | --outdir OUTDIR    |      Output directory to store files created.                        |
         |                    |      (Default: current directory)                                    |
         +--------------------+----------------------------------------------------------------------+
-    
+
 You can run the utility to generate only encryption keys using the command below::
 
     python mfg_gen.py generate-key
@@ -246,3 +248,6 @@ While running the manufacturing utility, the following folders will be created i
 - ``bin/`` for storing the generated binary files
 - ``csv/`` for storing the generated intermediate CSV files
 - ``keys/`` for storing encryption keys (when generating encrypted factory images)
+
+.. _esptool.py: https://github.com/espressif/esptool/#readme
+.. _Flash Download tool: https://www.espressif.com/en/support/download/other-tools?keys=flash+download+tools

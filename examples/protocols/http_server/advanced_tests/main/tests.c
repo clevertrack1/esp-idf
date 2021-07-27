@@ -22,16 +22,106 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
 {
 #define STR "Hello World!"
     ESP_LOGI(TAG, "Free Stack for server task: '%d'", uxTaskGetStackHighWaterMark(NULL));
-    httpd_resp_send(req, STR, strlen(STR));
+    httpd_resp_send(req, STR, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 #undef STR
+}
+
+/* This handler is intended to check what happens in case of empty values of headers.
+ * Here `Header2` is an empty header and `Header1` and `Header3` will have `Value1`
+ * and `Value3` in them. */
+static esp_err_t test_header_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+    int buf_len;
+    char *buf;
+
+    buf_len = httpd_req_get_hdr_value_len(req, "Header1");
+    if (buf_len > 0) {
+        buf = malloc(++buf_len);
+        if (!buf) {
+            ESP_LOGE(TAG, "Failed to allocate memory of %d bytes!", buf_len);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+            return ESP_ERR_NO_MEM;
+        }
+        /* Copy null terminated value string into buffer */
+        if (httpd_req_get_hdr_value_str(req, "Header1", buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Header1 content: %s", buf);
+            if (strcmp("Value1", buf) != 0) {
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Wrong value of Header1 received");
+                free(buf);
+                return ESP_ERR_INVALID_ARG;
+            } else {
+                ESP_LOGI(TAG, "Expected value and received value matched for Header1");
+            }
+        } else {
+            ESP_LOGE(TAG, "Error in getting value of Header1");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Error in getting value of Header1");
+            free(buf);
+            return ESP_FAIL;
+        }
+        free(buf);
+    } else {
+        ESP_LOGE(TAG, "Header1 not found");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Header1 not found");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    buf_len = httpd_req_get_hdr_value_len(req, "Header3");
+    if (buf_len > 0) {
+        buf = malloc(++buf_len);
+        if (!buf) {
+            ESP_LOGE(TAG, "Failed to allocate memory of %d bytes!", buf_len);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+            return ESP_ERR_NO_MEM;
+        }
+        /* Copy null terminated value string into buffer */
+        if (httpd_req_get_hdr_value_str(req, "Header3", buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Header3 content: %s", buf);
+            if (strcmp("Value3", buf) != 0) {
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Wrong value of Header3 received");
+                free(buf);
+                return ESP_ERR_INVALID_ARG;
+            } else {
+                ESP_LOGI(TAG, "Expected value and received value matched for Header3");
+            }
+        } else {
+            ESP_LOGE(TAG, "Error in getting value of Header3");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Error in getting value of Header3");
+            free(buf);
+            return ESP_FAIL;
+        }
+        free(buf);
+    } else {
+        ESP_LOGE(TAG, "Header3 not found");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Header3 not found");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    buf_len = httpd_req_get_hdr_value_len(req, "Header2");
+    buf = malloc(++buf_len);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate memory of %d bytes!", buf_len);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+    if (httpd_req_get_hdr_value_str(req, "Header2", buf, buf_len) == ESP_OK) {
+        ESP_LOGI(TAG, "Header2 content: %s", buf);
+        httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    } else {
+        ESP_LOGE(TAG, "Header2 not found");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Header2 not found");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
 static esp_err_t hello_type_get_handler(httpd_req_t *req)
 {
 #define STR "Hello World!"
     httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
-    httpd_resp_send(req, STR, strlen(STR));
+    httpd_resp_send(req, STR, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 #undef STR
 }
@@ -40,7 +130,7 @@ static esp_err_t hello_status_get_handler(httpd_req_t *req)
 {
 #define STR "Hello World!"
     httpd_resp_set_status(req, HTTPD_500);
-    httpd_resp_send(req, STR, strlen(STR));
+    httpd_resp_send(req, STR, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 #undef STR
 }
@@ -138,7 +228,7 @@ static esp_err_t adder_post_handler(httpd_req_t *req)
     *adder += val;
 
     snprintf(outbuf, sizeof(outbuf),"%d", *adder);
-    httpd_resp_send(req, outbuf, strlen(outbuf));
+    httpd_resp_send(req, outbuf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -161,11 +251,9 @@ static esp_err_t leftover_data_post_handler(httpd_req_t *req)
 
     buf[ret] = '\0';
     ESP_LOGI(TAG, "leftover data handler read %s", buf);
-    httpd_resp_send(req, buf, strlen(buf));
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
-
-extern int httpd_default_send(httpd_handle_t hd, int sockfd, const char *buf, unsigned buf_len, int flags);
 
 static void generate_async_resp(void *arg)
 {
@@ -182,10 +270,10 @@ static void generate_async_resp(void *arg)
 
     snprintf(buf, sizeof(buf), HTTPD_HDR_STR,
          strlen(STR));
-    httpd_default_send(hd, fd, buf, strlen(buf), 0);
+    httpd_socket_send(hd, fd, buf, strlen(buf), 0);
     /* Space for sending additional headers based on set_header */
-    httpd_default_send(hd, fd, "\r\n", strlen("\r\n"), 0);
-    httpd_default_send(hd, fd, STR, strlen(STR), 0);
+    httpd_socket_send(hd, fd, "\r\n", strlen("\r\n"), 0);
+    httpd_socket_send(hd, fd, STR, strlen(STR), 0);
 #undef STR
     free(arg);
 }
@@ -193,7 +281,7 @@ static void generate_async_resp(void *arg)
 static esp_err_t async_get_handler(httpd_req_t *req)
 {
 #define STR "Hello World!"
-    httpd_resp_send(req, STR, strlen(STR));
+    httpd_resp_send(req, STR, HTTPD_RESP_USE_STRLEN);
     /* Also register a HTTPD Work which sends the same data on the same
      * socket again
      */
@@ -215,6 +303,11 @@ static const httpd_uri_t basic_handlers[] = {
     { .uri      = "/hello/type_html",
       .method   = HTTP_GET,
       .handler  = hello_type_get_handler,
+      .user_ctx = NULL,
+    },
+    { .uri      = "/test_header",
+      .method   = HTTP_GET,
+      .handler  = test_header_get_handler,
       .user_ctx = NULL,
     },
     { .uri      = "/hello",
@@ -275,6 +368,8 @@ static httpd_handle_t test_httpd_start(void)
     pre_start_mem = esp_get_free_heap_size();
     httpd_handle_t hd;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    /* Modify this setting to match the number of test URI handlers */
+    config.max_uri_handlers  = 9;
     config.server_port = 1234;
 
     /* This check should be a part of http_server */

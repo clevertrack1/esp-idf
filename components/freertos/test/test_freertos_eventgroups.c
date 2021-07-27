@@ -8,6 +8,12 @@
 #include "driver/timer.h"
 #include "unity.h"
 
+#ifdef CONFIG_IDF_TARGET_ESP32S2
+#define int_clr_timers int_clr
+#define update update.update
+#define int_st_timers int_st
+#endif
+
 #define BIT_CALL (1 << 0)
 #define BIT_RESPONSE(TASK) (1 << (TASK+1))
 #define ALL_RESPONSE_BITS (((1 << NUM_TASKS) - 1) << 1)
@@ -119,7 +125,7 @@ TEST_CASE("FreeRTOS Event Group Sync", "[freertos]")
 }
 
 /*-----------------Test case for event group trace facilities-----------------*/
-#ifdef CONFIG_FREERTOS_USE_TRACE_FACILITY
+#ifdef  CONFIG_FREERTOS_USE_TRACE_FACILITY
 /*
  * Test event group Trace Facility functions such as
  * xEventGroupClearBitsFromISR(), xEventGroupSetBitsFromISR()
@@ -138,7 +144,7 @@ static bool test_clear_bits;
 static void IRAM_ATTR event_group_isr(void *arg)
 {
     portBASE_TYPE task_woken = pdFALSE;
-    timer_group_intr_clr_in_isr(TIMER_GROUP_0, TIMER_0);
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
     timer_group_enable_alarm_in_isr(TIMER_GROUP_0, xPortGetCoreID());
 
     if(test_set_bits){
@@ -211,5 +217,4 @@ TEST_CASE("FreeRTOS Event Group ISR", "[freertos]")
     vSemaphoreDelete(done_sem);
     vTaskDelay(10);     //Give time for idle task to clear up deleted tasks
 }
-
 #endif      //CONFIG_FREERTOS_USE_TRACE_FACILITY

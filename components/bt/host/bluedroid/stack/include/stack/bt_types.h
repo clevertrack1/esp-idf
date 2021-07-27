@@ -22,22 +22,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "bt_common.h"
-
-typedef uint8_t UINT8;
-typedef uint16_t UINT16;
-typedef uint32_t UINT32;
-typedef uint64_t UINT64;
+#include "osi/semaphore.h"
 
 typedef int8_t INT8;
 typedef int16_t INT16;
 typedef int32_t INT32;
-typedef bool BOOLEAN;
 
 #define PACKED  __packed
 // #define INLINE  __inline
 
-#define BCM_STRCPY_S(x1,x2,x3)      strcpy((x1),(x3))
-#define BCM_STRNCPY_S(x1,x2,x3,x4)  strncpy((x1),(x3),(x4))
+#define BCM_STRCPY_S(x1,x2)      strcpy((x1),(x2))
+#define BCM_STRNCPY_S(x1,x2,x3)  strncpy((x1),(x2),(x3))
 
 /* READ WELL !!
 **
@@ -52,6 +47,7 @@ typedef bool BOOLEAN;
 #define BT_EVT_MASK                 0xFF00
 #define BT_SUB_EVT_MASK             0x00FF
 #define BT_STATIC_RAND_ADDR_MASK    0xC0
+#define BT_NON_RPA_MASK             0x3F
 /* To Bluetooth Upper Layers        */
 /************************************/
 #define BT_EVT_TO_BTU_L2C_EVT       0x0900      /* L2CAP event */
@@ -196,6 +192,13 @@ typedef struct {
     uint8_t           data[];
 } BT_HDR;
 
+typedef struct {
+    uint8_t           status;
+    uint16_t          opcode;
+    osi_sem_t         sync_sem;
+} BlE_SYNC;
+
+
 #define BT_HDR_SIZE (sizeof (BT_HDR))
 
 #define BT_PSM_SDP                      0x0001
@@ -295,8 +298,6 @@ typedef struct {
 
 
 /* Common Bluetooth field definitions */
-#define BD_ADDR_LEN     6                   /* Device address length */
-typedef UINT8 BD_ADDR[BD_ADDR_LEN];         /* Device address */
 typedef UINT8 *BD_ADDR_PTR;                 /* Pointer to Device Address */
 
 #define AMP_KEY_TYPE_GAMP       0
@@ -354,6 +355,11 @@ typedef UINT8 ACO[ACO_LEN];                 /* Authenticated ciphering offset */
 #define COF_LEN         12
 typedef UINT8 COF[COF_LEN];                 /* ciphering offset number */
 
+#define AFH_CHANNELS_LEN    10
+typedef UINT8 AFH_CHANNELS[AFH_CHANNELS_LEN];
+#define BLE_CHANNELS_LEN    5
+typedef UINT8 BLE_CHANNELS[BLE_CHANNELS_LEN];
+
 typedef struct {
     UINT8               qos_flags;          /* TBD */
     UINT8               service_type;       /* see below */
@@ -407,23 +413,6 @@ typedef UINT8 ACCESS_CODE[ACCESS_CODE_BYTE_LEN];
 
 #define BT_CLK_TO_MICROSECS(x)  (((x) * 5000 + 3) / 8)
 #define BT_MICROSECS_TO_CLK(x)  (((x) * 8 + 2499) / 5000)
-
-/* Maximum UUID size - 16 bytes, and structure to hold any type of UUID. */
-#define MAX_UUID_SIZE              16
-typedef struct {
-#define LEN_UUID_16     2
-#define LEN_UUID_32     4
-#define LEN_UUID_128    16
-
-    UINT16          len;
-
-    union {
-        UINT16      uuid16;
-        UINT32      uuid32;
-        UINT8       uuid128[MAX_UUID_SIZE];
-    } uu;
-
-} tBT_UUID;
 
 #define BT_EIR_FLAGS_TYPE                   0x01
 #define BT_EIR_MORE_16BITS_UUID_TYPE        0x02

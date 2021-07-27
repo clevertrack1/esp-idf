@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "soc/soc_caps.h"
 #include "spi_flash_defs.h"
 #include "memspi_host_driver.h"
 #include "string.h"
@@ -19,43 +20,89 @@
 #include "cache_utils.h"
 #include "esp_flash_partitions.h"
 
-static const char TAG[] = "memspi";
-static const spi_flash_host_driver_t esp_flash_default_host = ESP_FLASH_DEFAULT_HOST_DRIVER();
 
-esp_err_t memspi_host_init_pointers(spi_flash_host_driver_t *host, memspi_host_data_t *data, const memspi_host_config_t *cfg)
+#define SPI_FLASH_HAL_MAX_WRITE_BYTES 64
+#define SPI_FLASH_HAL_MAX_READ_BYTES 64
+
+DRAM_ATTR static const spi_flash_host_driver_t esp_flash_default_host = ESP_FLASH_DEFAULT_HOST_DRIVER();
+
+#if SOC_MEMSPI_IS_INDEPENDENT
+extern void spi_flash_hal_gpspi_poll_cmd_done(spi_flash_host_inst_t *host);
+extern esp_err_t spi_flash_hal_gpspi_device_config(spi_flash_host_inst_t *host);
+esp_err_t spi_flash_hal_gpspi_configure_host_io_mode(
+    spi_flash_host_inst_t *host,
+    uint32_t command,
+    uint32_t addr_bitlen,
+    int dummy_cyclelen_base,
+    esp_flash_io_mode_t io_mode);
+extern esp_err_t spi_flash_hal_gpspi_common_command(spi_flash_host_inst_t *host, spi_flash_trans_t *trans);
+extern esp_err_t spi_flash_hal_gpspi_read(spi_flash_host_inst_t *host, void *buffer, uint32_t address, uint32_t read_len);
+extern uint32_t spi_flash_hal_gpspi_check_status(spi_flash_host_inst_t *host);
+extern bool spi_flash_hal_gpspi_supports_direct_write(spi_flash_host_inst_t *host, const void *p);
+extern bool spi_flash_hal_gpspi_supports_direct_read(spi_flash_host_inst_t *host, const void *p);
+
+/** Default configuration for GPSPI */
+static const spi_flash_host_driver_t esp_flash_gpspi_host = {
+        .dev_config = spi_flash_hal_gpspi_device_config,
+        .common_command = spi_flash_hal_gpspi_common_command,
+        .read_id = memspi_host_read_id_hs,
+        .erase_chip = memspi_host_erase_chip,
+        .erase_sector = memspi_host_erase_sector,
+        .erase_block = memspi_host_erase_block,
+        .read_status = memspi_host_read_status_hs,
+        .set_write_protect = memspi_host_set_write_protect,
+        .supports_direct_write = spi_flash_hal_gpspi_supports_direct_write,
+        .supports_direct_read = spi_flash_hal_gpspi_supports_direct_read,
+        .program_page = memspi_host_program_page,
+        .write_data_slicer = memspi_host_write_data_slicer,
+        .read = spi_flash_hal_gpspi_read,
+        .read_data_slicer = memspi_host_read_data_slicer,
+        .host_status = spi_flash_hal_gpspi_check_status,
+        .configure_host_io_mode = spi_flash_hal_gpspi_configure_host_io_mode,
+        .poll_cmd_done = spi_flash_hal_gpspi_poll_cmd_done,
+        .flush_cache = NULL,
+        .check_suspend = NULL,
+        .resume = spi_flash_hal_resume,
+        .suspend = spi_flash_hal_suspend,
+};
+#endif
+
+esp_err_t memspi_host_init_pointers(memspi_host_inst_t *host, const memspi_host_config_t *cfg)
 {
-    memcpy(host, &esp_flash_default_host, sizeof(spi_flash_host_driver_t));
-    esp_err_t err = spi_flash_hal_init(data, cfg);
-    if (err != ESP_OK) {
-        return err;
+#if SOC_MEMSPI_IS_INDEPENDENT
+    if (cfg->host_id == SPI1_HOST)
+        host->inst.driver = &esp_flash_default_host;
+    else {
+        host->inst.driver = &esp_flash_gpspi_host;
     }
+#else
+    host->inst.driver = &esp_flash_default_host;
+#endif
 
-    host->driver_data = data;
-    //some functions are not required if not SPI1
-    if (data->spi != &SPI1) {
-        host->flush_cache = NULL;
-        host->region_protected = NULL;
-    }
-    return ESP_OK;
+    esp_err_t err = spi_flash_hal_init(host, cfg);
+    return err;
 }
 
-esp_err_t memspi_host_read_id_hs(spi_flash_host_driver_t *chip_drv, uint32_t *id)
+#ifndef CONFIG_SPI_FLASH_ROM_IMPL
+
+static const char TAG[] = "memspi";
+
+esp_err_t memspi_host_read_id_hs(spi_flash_host_inst_t *host, uint32_t *id)
 {
-    //NOTE: we do have a read id function, however it doesn't work in high freq
+    uint32_t id_buf = 0;
     spi_flash_trans_t t = {
         .command = CMD_RDID,
-        .mosi_data = 0,
-        .mosi_len = 0,
-        .miso_len = 24
+        .miso_len = 3,
+        .miso_data = ((uint8_t*) &id_buf),
     };
-    chip_drv->common_command(chip_drv, &t);
-    uint32_t raw_flash_id = t.miso_data[0];
+    host->driver->common_command(host, &t);
+
+    uint32_t raw_flash_id = id_buf;
     ESP_EARLY_LOGV(TAG, "raw_chip_id: %X\n", raw_flash_id);
     if (raw_flash_id == 0xFFFFFF || raw_flash_id == 0) {
         ESP_EARLY_LOGE(TAG, "no response\n");
         return ESP_ERR_FLASH_NO_RESPONSE;
     }
-
     // Byte swap the flash id as it's usually written the other way around
     uint8_t mfg_id = raw_flash_id & 0xFF;
     uint16_t flash_id = (raw_flash_id >> 16) | (raw_flash_id & 0xFF00);
@@ -64,38 +111,116 @@ esp_err_t memspi_host_read_id_hs(spi_flash_host_driver_t *chip_drv, uint32_t *id
     return ESP_OK;
 }
 
-esp_err_t memspi_host_read_status_hs(spi_flash_host_driver_t *driver, uint8_t *out_sr)
+esp_err_t memspi_host_read_status_hs(spi_flash_host_inst_t *host, uint8_t *out_sr)
 {
     //NOTE: we do have a read id function, however it doesn't work in high freq
+    uint32_t stat_buf = 0;
     spi_flash_trans_t t = {
         .command = CMD_RDSR,
-        .mosi_data = 0,
-        .mosi_len = 0,
-        .miso_len = 8
+        .miso_data = ((uint8_t*) &stat_buf),
+        .miso_len = 1
     };
-    esp_err_t err = driver->common_command(driver, &t);
+    esp_err_t err = host->driver->common_command(host, &t);
     if (err != ESP_OK) {
         return err;
     }
-    *out_sr = t.miso_data[0];
+    *out_sr = stat_buf;
     return ESP_OK;
 }
 
-esp_err_t memspi_host_flush_cache(spi_flash_host_driver_t* driver, uint32_t addr, uint32_t size)
+esp_err_t memspi_host_flush_cache(spi_flash_host_inst_t *host, uint32_t addr, uint32_t size)
 {
-    if (((memspi_host_data_t*)(driver->driver_data))->spi == &SPI1) {
+    if ((void*)((memspi_host_inst_t*)host)->spi == (void*) spi_flash_ll_get_hw(SPI1_HOST)) {
         spi_flash_check_and_flush_cache(addr, size);
     }
     return ESP_OK;
 }
 
-bool memspi_region_protected(spi_flash_host_driver_t* driver, uint32_t addr, uint32_t size)
+void memspi_host_erase_chip(spi_flash_host_inst_t *host)
 {
-    if (((memspi_host_data_t*)(driver->driver_data))->spi != &SPI1) {
-        return false;
-    }
-    if (!esp_partition_main_flash_region_safe(addr, size)) {
-        return true;
-    }
-    return false;
+    spi_flash_trans_t t = { 0 };
+    t.command = CMD_CHIP_ERASE;
+    host->driver->common_command(host, &t);
 }
+
+// Only support 24bit address
+void memspi_host_erase_sector(spi_flash_host_inst_t *host, uint32_t start_address)
+{
+    assert(start_address < 0x1000000);
+    spi_flash_trans_t t = {
+        .command = CMD_SECTOR_ERASE,
+        .address_bitlen = 24,
+        .address = start_address
+    };
+    host->driver->common_command(host, &t);
+}
+
+// Only support 24bit address
+void memspi_host_erase_block(spi_flash_host_inst_t *host, uint32_t start_address)
+{
+    assert(start_address < 0x1000000);
+    spi_flash_trans_t t = {
+        .command = CMD_LARGE_BLOCK_ERASE,
+        .address_bitlen = 24,
+        .address = start_address,
+    };
+    host->driver->common_command(host, &t);
+}
+
+// Only support 24bit address
+void memspi_host_program_page(spi_flash_host_inst_t *host, const void *buffer, uint32_t address, uint32_t length)
+{
+    assert(address + length <= 0x1000000);
+    spi_flash_trans_t t = {
+        .command = CMD_PROGRAM_PAGE,
+        .address_bitlen = 24,
+        .address = address,
+        .mosi_len = length,
+        .mosi_data = buffer
+    };
+    host->driver->common_command(host, &t);
+}
+
+esp_err_t memspi_host_read(spi_flash_host_inst_t *host, void *buffer, uint32_t address, uint32_t read_len)
+{
+    spi_flash_trans_t t = {
+        .command = CMD_READ,
+        .address_bitlen = 24,
+        .address = address,
+        .miso_len = read_len,
+        .miso_data = buffer
+    };
+    host->driver->common_command(host, &t);
+    return ESP_OK;
+}
+
+esp_err_t memspi_host_set_write_protect(spi_flash_host_inst_t *host, bool wp)
+{
+    spi_flash_trans_t t = {
+        .command = wp ? CMD_WRDI : CMD_WREN
+    };
+    host->driver->common_command(host, &t);
+    return ESP_OK;
+}
+
+// When encryption is enabled, etc. the data slicer may be complicated
+// This is the simple case where the hardware has no other requirements than the size and page boundary
+int memspi_host_write_data_slicer(spi_flash_host_inst_t *host, uint32_t address, uint32_t len, uint32_t *align_address, uint32_t page_size)
+{
+    uint32_t align_addr = address;
+    uint32_t end_bound = (align_addr/page_size + 1) * page_size;
+    // Shouldn't program cross the page, or longer than SPI_FLASH_HAL_MAX_WRITE_BYTES
+    uint32_t max_len = MIN(end_bound - align_addr, SPI_FLASH_HAL_MAX_WRITE_BYTES);
+    *align_address = address;
+    return MIN(max_len, len);
+}
+
+int memspi_host_read_data_slicer(spi_flash_host_inst_t *host, uint32_t address, uint32_t len, uint32_t *align_address, uint32_t page_size)
+{
+    // Shouldn't read longer than SPI_FLASH_HAL_MAX_READ_BYTES
+    uint32_t max_len = SPI_FLASH_HAL_MAX_READ_BYTES;
+    *align_address = address;
+    return MIN(max_len, len);
+}
+
+#endif // CONFIG_SPI_FLASH_ROM_IMPL

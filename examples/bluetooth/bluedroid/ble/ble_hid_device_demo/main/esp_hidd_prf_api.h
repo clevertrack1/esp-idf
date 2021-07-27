@@ -24,10 +24,10 @@ extern "C" {
 #endif
 
 typedef enum {
-    ESP_HIDD_EVENT_REG_FINISH = 0,                     
+    ESP_HIDD_EVENT_REG_FINISH = 0,
     ESP_BAT_EVENT_REG,
-    ESP_HIDD_EVENT_DEINIT_FINISH,                       
-    ESP_HIDD_EVENT_BLE_CONNECT,                         
+    ESP_HIDD_EVENT_DEINIT_FINISH,
+    ESP_HIDD_EVENT_BLE_CONNECT,
     ESP_HIDD_EVENT_BLE_DISCONNECT,
     ESP_HIDD_EVENT_BLE_VENDOR_REPORT_WRITE_EVT,
 } esp_hidd_cb_event_t;
@@ -50,17 +50,18 @@ typedef enum {
     ESP_HIDD_DEINIT_FAILED = 0,
 } esp_hidd_deinit_state_t;
 
-#define LEFT_CONTROL_KEY_MASK        (1 >> 0)
-#define LEFT_SHIFT_KEY_MASK              (1 >> 1)
-#define LEFT_ALT_KEY_MASK            (1 >> 2)
-#define LEFT_GUI_KEY_MASK            (1 >> 3)
-#define RIGHT_CONTROL_KEY_MASK       (1 >> 4)
-#define RIGHT_SHIFT_KEY_MASK         (1 >> 5)
-#define RIGHT_ALT_KEY_MASK           (1 >> 6)
-#define RIGHT_GUI_KEY_MASK           (1 >> 7)
+#define LEFT_CONTROL_KEY_MASK        (1 << 0)
+#define LEFT_SHIFT_KEY_MASK          (1 << 1)
+#define LEFT_ALT_KEY_MASK            (1 << 2)
+#define LEFT_GUI_KEY_MASK            (1 << 3)
+#define RIGHT_CONTROL_KEY_MASK       (1 << 4)
+#define RIGHT_SHIFT_KEY_MASK         (1 << 5)
+#define RIGHT_ALT_KEY_MASK           (1 << 6)
+#define RIGHT_GUI_KEY_MASK           (1 << 7)
+
 typedef uint8_t key_mask_t;
 /**
- * @brief HIDD callback parameters union 
+ * @brief HIDD callback parameters union
  */
 typedef union {
     /**
@@ -147,7 +148,7 @@ esp_err_t esp_hidd_profile_deinit(void);
 /**
  *
  * @brief           Get hidd profile version
- * 
+ *
  * @return          Most 8bit significant is Great version, Least 8bit is Sub version
  *
  */
@@ -164,4 +165,3 @@ void esp_hidd_send_mouse_value(uint16_t conn_id, uint8_t mouse_button, int8_t mi
 #endif
 
 #endif /* __ESP_HIDD_API_H__ */
-

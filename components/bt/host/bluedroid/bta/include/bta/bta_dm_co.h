@@ -206,6 +206,8 @@ extern void bta_dm_co_ble_set_rsp_key_req(UINT8 rsp_key);
 
 extern void bta_dm_co_ble_set_max_key_size(UINT8 ble_key_size);
 
+extern void bta_dm_co_ble_set_min_key_size(UINT8 ble_key_size);
+
 extern void bta_dm_co_ble_set_accept_auth_enable(UINT8 enable);
 
 extern UINT8 bta_dm_co_ble_get_accept_auth_enable(void);
@@ -213,4 +215,6 @@ extern UINT8 bta_dm_co_ble_get_accept_auth_enable(void);
 extern UINT8 bta_dm_co_ble_get_auth_req(void);
 
 extern void bta_dm_co_ble_oob_support(UINT8 enable);
+
+extern void bta_dm_co_ble_set_appl_enc_key_size(UINT8 ble_key_size);
 #endif

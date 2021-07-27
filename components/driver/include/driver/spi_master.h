@@ -1,16 +1,8 @@
-// Copyright 2010-2019 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2010-2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 #pragma once
 
@@ -32,7 +24,6 @@
 #define SPI_MASTER_FREQ_26M     (APB_CLK_FREQ/3)    ///< 26.67MHz
 #define SPI_MASTER_FREQ_40M     (APB_CLK_FREQ/2)    ///< 40MHz
 #define SPI_MASTER_FREQ_80M     (APB_CLK_FREQ/1)    ///< 80MHz
-
 #ifdef __cplusplus
 extern "C"
 {
@@ -51,6 +42,7 @@ extern "C"
   *       Set this flag to confirm that you're going to work with output only, or read without dummy bits at your own risk.
   */
 #define SPI_DEVICE_NO_DUMMY                (1<<6)
+#define SPI_DEVICE_DDRCLK                  (1<<7)
 
 
 typedef struct spi_transaction_t spi_transaction_t;
@@ -63,9 +55,14 @@ typedef struct {
     uint8_t command_bits;           ///< Default amount of bits in command phase (0-16), used when ``SPI_TRANS_VARIABLE_CMD`` is not used, otherwise ignored.
     uint8_t address_bits;           ///< Default amount of bits in address phase (0-64), used when ``SPI_TRANS_VARIABLE_ADDR`` is not used, otherwise ignored.
     uint8_t dummy_bits;             ///< Amount of dummy bits to insert between address and data phase
-    uint8_t mode;                   ///< SPI mode (0-3)
-    uint8_t duty_cycle_pos;         ///< Duty cycle of positive clock, in 1/256th increments (128 = 50%/50% duty). Setting this to 0 (=not setting it) is equivalent to setting this to 128.
-    uint8_t cs_ena_pretrans;        ///< Amount of SPI bit-cycles the cs should be activated before the transmission (0-16). This only works on half-duplex transactions.
+    uint8_t mode;                   /**< SPI mode, representing a pair of (CPOL, CPHA) configuration:
+                                         - 0: (0, 0)
+                                         - 1: (0, 1)
+                                         - 2: (1, 0)
+                                         - 3: (1, 1)
+                                     */
+    uint16_t duty_cycle_pos;         ///< Duty cycle of positive clock, in 1/256th increments (128 = 50%/50% duty). Setting this to 0 (=not setting it) is equivalent to setting this to 128.
+    uint16_t cs_ena_pretrans;        ///< Amount of SPI bit-cycles the cs should be activated before the transmission (0-16). This only works on half-duplex transactions.
     uint8_t cs_ena_posttrans;       ///< Amount of SPI bit-cycles the cs should stay active after the transmission (0-16)
     int clock_speed_hz;             ///< Clock speed, divisors of 80MHz, in Hz. See ``SPI_MASTER_FREQ_*``.
     int input_delay_ns;             /**< Maximum data valid time of slave. The time required between SCLK and MISO
@@ -107,7 +104,8 @@ typedef struct {
 #define SPI_TRANS_VARIABLE_CMD        (1<<5)  ///< Use the ``command_bits`` in ``spi_transaction_ext_t`` rather than default value in ``spi_device_interface_config_t``.
 #define SPI_TRANS_VARIABLE_ADDR       (1<<6)  ///< Use the ``address_bits`` in ``spi_transaction_ext_t`` rather than default value in ``spi_device_interface_config_t``.
 #define SPI_TRANS_VARIABLE_DUMMY      (1<<7)  ///< Use the ``dummy_bits`` in ``spi_transaction_ext_t`` rather than default value in ``spi_device_interface_config_t``.
-
+#define SPI_TRANS_SET_CD              (1<<7)  ///< Set the CD pin
+#define SPI_TRANS_CS_KEEP_ACTIVE      (1<<8)  ///< Keep CS active after data transfer
 /**
  * This structure describes one SPI transaction. The descriptor should not be modified until the transaction finishes.
  */
@@ -161,7 +159,7 @@ typedef struct spi_device_t* spi_device_handle_t;  ///< Handle for a device on a
  * @note While in general, speeds up to 80MHz on the dedicated SPI pins and 40MHz on GPIO-matrix-routed pins are
  *       supported, full-duplex transfers routed over the GPIO matrix only support speeds up to 26MHz.
  *
- * @param host SPI peripheral to allocate device on
+ * @param host_id SPI peripheral to allocate device on
  * @param dev_config SPI interface protocol config for the device
  * @param handle Pointer to variable to hold the device handle
  * @return
@@ -170,7 +168,7 @@ typedef struct spi_device_t* spi_device_handle_t;  ///< Handle for a device on a
  *         - ESP_ERR_NO_MEM        if out of memory
  *         - ESP_OK                on success
  */
-esp_err_t spi_bus_add_device(spi_host_device_t host, const spi_device_interface_config_t *dev_config, spi_device_handle_t *handle);
+esp_err_t spi_bus_add_device(spi_host_device_t host_id, const spi_device_interface_config_t *dev_config, spi_device_handle_t *handle);
 
 
 /**
@@ -196,7 +194,8 @@ esp_err_t spi_bus_remove_device(spi_device_handle_t handle);
  * @param ticks_to_wait Ticks to wait until there's room in the queue; use portMAX_DELAY to
  *                      never time out.
  * @return
- *         - ESP_ERR_INVALID_ARG   if parameter is invalid
+ *         - ESP_ERR_INVALID_ARG   if parameter is invalid. This can happen if SPI_DEVICE_CS_KEEP_LOW flag is specified while
+ *                                 the bus was not acquired (`spi_device_acquire_bus()` should be called first)
  *         - ESP_ERR_TIMEOUT       if there was no room in the queue before ticks_to_wait expired
  *         - ESP_ERR_NO_MEM        if allocating DMA-capable temporary buffer failed
  *         - ESP_ERR_INVALID_STATE if previous transactions are not finished
@@ -259,7 +258,8 @@ esp_err_t spi_device_transmit(spi_device_handle_t handle, spi_transaction_t *tra
  *              currently only portMAX_DELAY is supported.
  *
  * @return
- *         - ESP_ERR_INVALID_ARG   if parameter is invalid
+ *         - ESP_ERR_INVALID_ARG   if parameter is invalid. This can happen if SPI_DEVICE_CS_KEEP_LOW flag is specified while
+ *                                 the bus was not acquired (`spi_device_acquire_bus()` should be called first)
  *         - ESP_ERR_TIMEOUT       if the device cannot get control of the bus before ``ticks_to_wait`` expired
  *         - ESP_ERR_NO_MEM        if allocating DMA-capable temporary buffer failed
  *         - ESP_ERR_INVALID_STATE if previous transactions are not finished
@@ -384,4 +384,3 @@ int spi_get_freq_limit(bool gpio_is_used, int input_delay_ns);
 #ifdef __cplusplus
 }
 #endif
-

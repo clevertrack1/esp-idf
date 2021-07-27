@@ -1,6 +1,6 @@
-set(COMPONENT_SRCS "ble_mesh_demo_main.c"
-                   "board.c")
+set(srcs "main.c"
+        "board.c"
+        "cmd_wifi.c")
 
-set(COMPONENT_ADD_INCLUDEDIRS ".")
-
-register_component()
+idf_component_register(SRCS "${srcs}"
+                    INCLUDE_DIRS  ".")

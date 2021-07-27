@@ -23,7 +23,7 @@
  ******************************************************************************/
 #define LOG_TAG "bt_bta_sys_main"
 
-// #include <assert.h>
+#include <assert.h>
 #include <string.h>
 
 #include "osi/alarm.h"
@@ -200,7 +200,7 @@ void bta_sys_free(void)
 
 /*******************************************************************************
 **
-** Function         bta_dm_sm_execute
+** Function         bta_sys_sm_execute
 **
 ** Description      State machine event handling function for DM
 **
@@ -504,7 +504,6 @@ void bta_sys_event(void * param)
     if (freebuf) {
         osi_free(p_msg);
     }
-
 }
 
 /*******************************************************************************

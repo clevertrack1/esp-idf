@@ -2178,18 +2178,16 @@ void btm_process_cancel_complete(UINT8 status, UINT8 mode)
 **                  BTM_WRONG_MODE if the device is not up.
 **
 *******************************************************************************/
-tBTM_STATUS  btm_initiate_rem_name (BD_ADDR remote_bda, tBTM_INQ_INFO *p_cur,
+tBTM_STATUS btm_initiate_rem_name (BD_ADDR remote_bda, tBTM_INQ_INFO *p_cur,
                                     UINT8 origin, UINT32 timeout, tBTM_CMPL_CB *p_cb)
 {
     tBTM_INQUIRY_VAR_ST *p_inq = &btm_cb.btm_inq_vars;
     BOOLEAN              cmd_ok;
 
-
     /*** Make sure the device is ready ***/
     if (!BTM_IsDeviceUp()) {
         return (BTM_WRONG_MODE);
     }
-
 
     if (origin == BTM_RMT_NAME_SEC) {
         cmd_ok = btsnd_hcic_rmt_name_req (remote_bda, HCI_PAGE_SCAN_REP_MODE_R1,
@@ -2302,8 +2300,6 @@ void btm_process_remote_name (BD_ADDR bda, BD_NAME bdn, UINT16 evt_len, UINT8 hc
             }
             rem_name.remote_bd_name[rem_name.length] = 0;
         }
-
-
         /* If processing a stand alone remote name then report the error in the callback */
         else {
             rem_name.status = BTM_BAD_VALUE_RET;

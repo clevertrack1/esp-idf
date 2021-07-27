@@ -19,14 +19,14 @@ static const char *TAG = "example";
 void app_main(void)
 {
     ESP_LOGI(TAG, "Initializing SPIFFS");
-    
+
     esp_vfs_spiffs_conf_t conf = {
       .base_path = "/spiffs",
       .partition_label = NULL,
       .max_files = 5,
       .format_if_mount_failed = true
     };
-    
+
     // Use settings defined above to initialize and mount SPIFFS filesystem.
     // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
     esp_err_t ret = esp_vfs_spiffs_register(&conf);
@@ -41,9 +41,9 @@ void app_main(void)
         }
         return;
     }
-    
+
     size_t total = 0, used = 0;
-    ret = esp_spiffs_info(NULL, &total, &used);
+    ret = esp_spiffs_info(conf.partition_label, &total, &used);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
     } else {
@@ -94,6 +94,6 @@ void app_main(void)
     ESP_LOGI(TAG, "Read from file: '%s'", line);
 
     // All done, unmount partition and disable SPIFFS
-    esp_vfs_spiffs_unregister(NULL);
+    esp_vfs_spiffs_unregister(conf.partition_label);
     ESP_LOGI(TAG, "SPIFFS unmounted");
 }

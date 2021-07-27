@@ -15,21 +15,16 @@
 #include <stdlib.h>
 #include <sys/cdefs.h>
 #include "esp_log.h"
+#include "esp_check.h"
 #include "esp_eth.h"
 #include "eth_phy_regs_struct.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_rom_gpio.h"
+#include "esp_rom_sys.h"
 
-static const char *TAG = "dm9051";
-#define PHY_CHECK(a, str, goto_tag, ...)                                          \
-    do                                                                            \
-    {                                                                             \
-        if (!(a))                                                                 \
-        {                                                                         \
-            ESP_LOGE(TAG, "%s(%d): " str, __FUNCTION__, __LINE__, ##__VA_ARGS__); \
-            goto goto_tag;                                                        \
-        }                                                                         \
-    } while (0)
+static const char *TAG = "dm9051.phy";
 
 /***************Vendor Specific Register***************/
 
@@ -79,74 +74,134 @@ typedef union {
 typedef struct {
     esp_eth_phy_t parent;
     esp_eth_mediator_t *eth;
-    const char *name;
-    uint32_t addr;
+    int addr;
     uint32_t reset_timeout_ms;
     uint32_t autonego_timeout_ms;
     eth_link_t link_status;
+    int reset_gpio_num;
 } phy_dm9051_t;
+
+static esp_err_t dm9051_update_link_duplex_speed(phy_dm9051_t *dm9051)
+{
+    esp_err_t ret = ESP_OK;
+    esp_eth_mediator_t *eth = dm9051->eth;
+    eth_speed_t speed = ETH_SPEED_10M;
+    eth_duplex_t duplex = ETH_DUPLEX_HALF;
+    uint32_t peer_pause_ability = false;
+    bmsr_reg_t bmsr;
+    dscsr_reg_t dscsr;
+    anlpar_reg_t anlpar;
+    // BMSR is a latch low register
+    // after power up, the first latched value must be 0, which means down
+    // to speed up power up link speed, double read this register as a workaround
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_ANLPAR_REG_ADDR, &(anlpar.val)), err, TAG, "read ANLPAR failed");
+    eth_link_t link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
+    /* check if link status changed */
+    if (dm9051->link_status != link) {
+        /* when link up, read negotiation result */
+        if (link == ETH_LINK_UP) {
+            ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCSR_REG_ADDR, &(dscsr.val)), err, TAG, "read DSCSR failed");
+            if (dscsr.fdx100 || dscsr.hdx100) {
+                speed = ETH_SPEED_100M;
+            } else {
+                speed = ETH_SPEED_10M;
+            }
+            if (dscsr.fdx100 || dscsr.fdx10) {
+                duplex = ETH_DUPLEX_FULL;
+            } else {
+                duplex = ETH_DUPLEX_HALF;
+            }
+            ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_SPEED, (void *)speed), err, TAG, "change speed failed");
+            ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_DUPLEX, (void *)duplex), err, TAG, "change duplex failed");
+            /* if we're in duplex mode, and peer has the flow control ability */
+            if (duplex == ETH_DUPLEX_FULL && anlpar.symmetric_pause) {
+                peer_pause_ability = 1;
+            } else {
+                peer_pause_ability = 0;
+            }
+            ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_PAUSE, (void *)peer_pause_ability), err, TAG, "change pause ability failed");
+        }
+        ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_LINK, (void *)link), err, TAG, "change link failed");
+        dm9051->link_status = link;
+    }
+    return ESP_OK;
+err:
+    return ret;
+}
 
 static esp_err_t dm9051_set_mediator(esp_eth_phy_t *phy, esp_eth_mediator_t *eth)
 {
-    PHY_CHECK(eth, "can't set mediator for dm9051 to null", err);
+    esp_err_t ret = ESP_OK;
+    ESP_GOTO_ON_FALSE(eth, ESP_ERR_INVALID_ARG, err, TAG, "can't set mediator to null");
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
     dm9051->eth = eth;
     return ESP_OK;
 err:
-    return ESP_ERR_INVALID_ARG;
+    return ret;
 }
 
 static esp_err_t dm9051_get_link(esp_eth_phy_t *phy)
 {
+    esp_err_t ret = ESP_OK;
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
-    esp_eth_mediator_t *eth = dm9051->eth;
-    bmsr_reg_t bmsr;
-
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)) == ESP_OK, "read BMSR failed", err);
-    eth_link_t link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
-    if (dm9051->link_status != link) {
-        if (link == ETH_LINK_UP) {
-            phy->negotiate(phy);
-        } else {
-            PHY_CHECK(eth->on_state_changed(eth, ETH_STATE_LINK, (void *)link) == ESP_OK, "send link event failed", err);
-            dm9051->link_status = link;
-        }
-    }
+    /* Updata information about link, speed, duplex */
+    ESP_GOTO_ON_ERROR(dm9051_update_link_duplex_speed(dm9051), err, TAG, "update link duplex speed failed");
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
 }
 
 static esp_err_t dm9051_reset(esp_eth_phy_t *phy)
 {
+    esp_err_t ret = ESP_OK;
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
+    dm9051->link_status = ETH_LINK_DOWN;
     esp_eth_mediator_t *eth = dm9051->eth;
     dscr_reg_t dscr;
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, &(dscr.val)) == ESP_OK, "read DSCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, &(dscr.val)), err, TAG, "read DSCR failed");
     dscr.smrst = 1;
-    PHY_CHECK(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, dscr.val) == ESP_OK, "write DSCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, dscr.val), err, TAG, "write DSCR failed");
     bmcr_reg_t bmcr = {.reset = 1};
-    PHY_CHECK(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val) == ESP_OK, "write BMCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val), err, TAG, "write BMCR failed");
     /* Wait for reset complete */
     uint32_t to = 0;
     for (to = 0; to < dm9051->reset_timeout_ms / 10; to++) {
         vTaskDelay(pdMS_TO_TICKS(10));
-        PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)) == ESP_OK, "read BMCR failed", err);
-        PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, &(dscr.val)) == ESP_OK, "read DSCR failed", err);
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCR_REG_ADDR, &(dscr.val)), err, TAG, "read DSCR failed");
         if (!bmcr.reset && !dscr.smrst) {
             break;
         }
     }
-    PHY_CHECK(to < dm9051->reset_timeout_ms / 10, "PHY reset timeout", err);
+    ESP_GOTO_ON_FALSE(to < dm9051->reset_timeout_ms / 10, ESP_FAIL, err, TAG, "PHY reset timeout");
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
+}
+
+static esp_err_t dm9051_reset_hw(esp_eth_phy_t *phy)
+{
+    phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
+    // set reset_gpio_num minus zero can skip hardware reset phy chip
+    if (dm9051->reset_gpio_num >= 0) {
+        esp_rom_gpio_pad_select_gpio(dm9051->reset_gpio_num);
+        gpio_set_direction(dm9051->reset_gpio_num, GPIO_MODE_OUTPUT);
+        gpio_set_level(dm9051->reset_gpio_num, 0);
+        esp_rom_delay_us(100); // insert min input assert time
+        gpio_set_level(dm9051->reset_gpio_num, 1);
+    }
+    return ESP_OK;
 }
 
 static esp_err_t dm9051_negotiate(esp_eth_phy_t *phy)
 {
+    esp_err_t ret = ESP_OK;
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
     esp_eth_mediator_t *eth = dm9051->eth;
+    /* in case any link status has changed, let's assume we're in link down status */
+    dm9051->link_status = ETH_LINK_DOWN;
     /* Start auto negotiation */
     bmcr_reg_t bmcr = {
         .speed_select = 1,     /* 100Mbps */
@@ -154,55 +209,34 @@ static esp_err_t dm9051_negotiate(esp_eth_phy_t *phy)
         .en_auto_nego = 1,     /* Auto Negotiation */
         .restart_auto_nego = 1 /* Restart Auto Negotiation */
     };
-    PHY_CHECK(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val) == ESP_OK, "write BMCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val), err, TAG, "write BMCR failed");
     /* Wait for auto negotiation complete */
     bmsr_reg_t bmsr;
     dscsr_reg_t dscsr;
     uint32_t to = 0;
-    for (to = 0; to < dm9051->autonego_timeout_ms / 10; to++) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)) == ESP_OK, "read BMSR failed", err);
-        PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCSR_REG_ADDR, &(dscsr.val)) == ESP_OK, "read DSCSR failed", err);
+    for (to = 0; to < dm9051->autonego_timeout_ms / 100; to++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCSR_REG_ADDR, &(dscsr.val)), err, TAG, "read DSCSR failed");
         if (bmsr.auto_nego_complete && dscsr.anmb & 0x08) {
             break;
         }
     }
-    if (to >= dm9051->autonego_timeout_ms / 10) {
+    if (to >= dm9051->autonego_timeout_ms / 100) {
         ESP_LOGW(TAG, "Ethernet PHY auto negotiation timeout");
-    }
-    /* Updata information about link, speed, duplex */
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)) == ESP_OK, "read BMSR failed", err);
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_DSCSR_REG_ADDR, &(dscsr.val)) == ESP_OK, "read DSCSR failed", err);
-    eth_link_t link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
-    eth_speed_t speed = ETH_SPEED_10M;
-    eth_duplex_t duplex = ETH_DUPLEX_HALF;
-    if (dscsr.fdx100 || dscsr.hdx100) {
-        speed = ETH_SPEED_100M;
-    } else {
-        speed = ETH_SPEED_10M;
-    }
-    if (dscsr.fdx100 || dscsr.fdx10) {
-        duplex = ETH_DUPLEX_FULL;
-    } else {
-        duplex = ETH_DUPLEX_HALF;
-    }
-    PHY_CHECK(eth->on_state_changed(eth, ETH_STATE_SPEED, (void *)speed) == ESP_OK, "send speed event failed", err);
-    PHY_CHECK(eth->on_state_changed(eth, ETH_STATE_DUPLEX, (void *)duplex) == ESP_OK, "send duplex event failed", err);
-    if (dm9051->link_status != link) {
-        PHY_CHECK(eth->on_state_changed(eth, ETH_STATE_LINK, (void *)link) == ESP_OK, "send link event failed", err);
-        dm9051->link_status = link;
     }
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
 }
 
 static esp_err_t dm9051_pwrctl(esp_eth_phy_t *phy, bool enable)
 {
+    esp_err_t ret = ESP_OK;
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
     esp_eth_mediator_t *eth = dm9051->eth;
     bmcr_reg_t bmcr;
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)) == ESP_OK, "read BMCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
     if (!enable) {
         /* Enable IEEE Power Down Mode */
         bmcr.power_down = 1;
@@ -210,16 +244,25 @@ static esp_err_t dm9051_pwrctl(esp_eth_phy_t *phy, bool enable)
         /* Disable IEEE Power Down Mode */
         bmcr.power_down = 0;
     }
-    PHY_CHECK(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val) == ESP_OK, "write BMCR failed", err);
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)) == ESP_OK, "read BMCR failed", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val), err, TAG, "write BMCR failed");
     if (!enable) {
-        PHY_CHECK(bmcr.power_down == 1, "power down failed", err);
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
+        ESP_GOTO_ON_FALSE(bmcr.power_down == 1, ESP_FAIL, err, TAG, "power down failed");
     } else {
-        PHY_CHECK(bmcr.power_down == 0, "power up failed", err);
+        /* wait for power up complete */
+        uint32_t to = 0;
+        for (to = 0; to < dm9051->reset_timeout_ms / 10; to++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
+            if (bmcr.power_down == 0) {
+                break;
+            }
+        }
+        ESP_GOTO_ON_FALSE(to < dm9051->reset_timeout_ms / 10, ESP_FAIL, err, TAG, "power up timeout");
     }
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
 }
 
 static esp_err_t dm9051_set_addr(esp_eth_phy_t *phy, uint32_t addr)
@@ -231,12 +274,13 @@ static esp_err_t dm9051_set_addr(esp_eth_phy_t *phy, uint32_t addr)
 
 static esp_err_t dm9051_get_addr(esp_eth_phy_t *phy, uint32_t *addr)
 {
-    PHY_CHECK(addr, "get phy address failed", err);
+    esp_err_t ret = ESP_OK;
+    ESP_GOTO_ON_FALSE(addr, ESP_ERR_INVALID_ARG, err, TAG, "addr can't be null");
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
     *addr = dm9051->addr;
     return ESP_OK;
 err:
-    return ESP_ERR_INVALID_ARG;
+    return ret;
 }
 
 static esp_err_t dm9051_del(esp_eth_phy_t *phy)
@@ -246,46 +290,74 @@ static esp_err_t dm9051_del(esp_eth_phy_t *phy)
     return ESP_OK;
 }
 
-static esp_err_t dm9051_init(esp_eth_phy_t *phy)
+static esp_err_t dm9051_advertise_pause_ability(esp_eth_phy_t *phy, uint32_t ability)
 {
+    esp_err_t ret = ESP_OK;
     phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
     esp_eth_mediator_t *eth = dm9051->eth;
+    /* Set PAUSE function ability */
+    anar_reg_t anar;
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_ANAR_REG_ADDR, &(anar.val)), err, TAG, "read ANAR failed");
+    if (ability) {
+        anar.asymmetric_pause = 1;
+        anar.symmetric_pause = 1;
+    } else {
+        anar.asymmetric_pause = 0;
+        anar.symmetric_pause = 0;
+    }
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, dm9051->addr, ETH_PHY_ANAR_REG_ADDR, anar.val), err, TAG, "write ANAR failed");
+    return ESP_OK;
+err:
+    return ret;
+}
+
+static esp_err_t dm9051_init(esp_eth_phy_t *phy)
+{
+    esp_err_t ret = ESP_OK;
+    phy_dm9051_t *dm9051 = __containerof(phy, phy_dm9051_t, parent);
+    esp_eth_mediator_t *eth = dm9051->eth;
+    // Detect PHY address
+    if (dm9051->addr == ESP_ETH_PHY_ADDR_AUTO) {
+        ESP_GOTO_ON_ERROR(esp_eth_detect_phy_addr(eth, &dm9051->addr), err, TAG, "Detect PHY address failed");
+    }
     /* Power on Ethernet PHY */
-    PHY_CHECK(dm9051_pwrctl(phy, true) == ESP_OK, "power on Ethernet PHY failed", err);
+    ESP_GOTO_ON_ERROR(dm9051_pwrctl(phy, true), err, TAG, "power control failed");
     /* Reset Ethernet PHY */
-    PHY_CHECK(dm9051_reset(phy) == ESP_OK, "reset Ethernet PHY failed", err);
+    ESP_GOTO_ON_ERROR(dm9051_reset(phy), err, TAG, "reset failed");
     /* Check PHY ID */
     phyidr1_reg_t id1;
     phyidr2_reg_t id2;
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_IDR1_REG_ADDR, &(id1.val)) == ESP_OK, "read ID1 failed", err);
-    PHY_CHECK(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_IDR2_REG_ADDR, &(id2.val)) == ESP_OK, "read ID2 failed", err);
-    PHY_CHECK(id1.oui_msb == 0x0181 && id2.oui_lsb == 0x2E && id2.vendor_model == 0x0A, "wrong PHY chip ID", err);
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_IDR1_REG_ADDR, &(id1.val)), err, TAG, "read ID1 failed");
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, dm9051->addr, ETH_PHY_IDR2_REG_ADDR, &(id2.val)), err, TAG, "read ID2 failed");
+    ESP_GOTO_ON_FALSE(id1.oui_msb == 0x0181 && id2.oui_lsb == 0x2E && id2.vendor_model == 0x0A, ESP_FAIL, err, TAG, "wrong chip ID");
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
 }
 
 static esp_err_t dm9051_deinit(esp_eth_phy_t *phy)
 {
+    esp_err_t ret = ESP_OK;
     /* Power off Ethernet PHY */
-    PHY_CHECK(dm9051_pwrctl(phy, false) == ESP_OK, "power off Ethernet PHY failed", err);
+    ESP_GOTO_ON_ERROR(dm9051_pwrctl(phy, false), err, TAG, "power control failed");
     return ESP_OK;
 err:
-    return ESP_FAIL;
+    return ret;
 }
 
 esp_eth_phy_t *esp_eth_phy_new_dm9051(const eth_phy_config_t *config)
 {
-    PHY_CHECK(config, "can't set phy config to null", err);
-    PHY_CHECK(config->phy_addr == 1, "dm9051's phy address can only set to 1", err);
+    esp_eth_phy_t *ret = NULL;
+    ESP_GOTO_ON_FALSE(config, NULL, err, TAG, "can't set phy config to null");
     phy_dm9051_t *dm9051 = calloc(1, sizeof(phy_dm9051_t));
-    PHY_CHECK(dm9051, "calloc dm9051 object failed", err);
-    dm9051->name = "dm9051";
+    ESP_GOTO_ON_FALSE(dm9051, NULL, err, TAG, "calloc dm9051 failed");
     dm9051->addr = config->phy_addr;
     dm9051->reset_timeout_ms = config->reset_timeout_ms;
+    dm9051->reset_gpio_num = config->reset_gpio_num;
     dm9051->link_status = ETH_LINK_DOWN;
     dm9051->autonego_timeout_ms = config->autonego_timeout_ms;
     dm9051->parent.reset = dm9051_reset;
+    dm9051->parent.reset_hw = dm9051_reset_hw;
     dm9051->parent.init = dm9051_init;
     dm9051->parent.deinit = dm9051_deinit;
     dm9051->parent.set_mediator = dm9051_set_mediator;
@@ -294,9 +366,9 @@ esp_eth_phy_t *esp_eth_phy_new_dm9051(const eth_phy_config_t *config)
     dm9051->parent.pwrctl = dm9051_pwrctl;
     dm9051->parent.get_addr = dm9051_get_addr;
     dm9051->parent.set_addr = dm9051_set_addr;
+    dm9051->parent.advertise_pause_ability = dm9051_advertise_pause_ability;
     dm9051->parent.del = dm9051_del;
-
     return &(dm9051->parent);
 err:
-    return NULL;
+    return ret;
 }

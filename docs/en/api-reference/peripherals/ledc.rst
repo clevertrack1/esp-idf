@@ -1,12 +1,18 @@
 LED Control
 ===========
+{IDF_TARGET_LEDC_CHAN_NUM:default="8", esp32="16", esp32s2="8", esp32c3="6"}
+
+:link_to_translation:`zh_CN:[中文]`
 
 Introduction
 ------------
 
-The LED control (LEDC) peripheral is primarily designed to control the intensity of LEDs, although it can also be used to generate PWM signals for other purposes as well. It has 16 channels which can generate independent waveforms that can be used, for example, to drive RGB LED devices. 
+The LED control (LEDC) peripheral is primarily designed to control the intensity of LEDs, although it can also be used to generate PWM signals for other purposes.
+It has {IDF_TARGET_LEDC_CHAN_NUM} channels which can generate independent waveforms that can be used, for example, to drive RGB LED devices.
 
-A half of LEDC's channels operate in high speed mode. This mode is implemented in hardware and offers automatic and glitch-free changing of the PWM duty cycle. The other half of channels operate in low speed mode, where the moment of change depends on the application software. Each group of channels is also able to use different clock sources, but this feature is not yet supported in the LEDC driver.
+.. only:: esp32
+
+    LEDC channels are divided into two groups of 8 channels each. One group of LEDC channels operates in high speed mode. This mode is implemented in hardware and offers automatic and glitch-free changing of the PWM duty cycle. The other group of channels operate in low speed mode, the PWM duty cycle must be changed by the driver in software. Each group of channels is also able to use different clock sources.
 
 The PWM controller can automatically increase or decrease the duty cycle gradually, allowing for fades without any processor interference.
 
@@ -14,13 +20,20 @@ The PWM controller can automatically increase or decrease the duty cycle gradual
 Functionality Overview
 ----------------------
 
-Getting LEDC to work on a specific channel in either :ref:`high or low speed mode <ledc-api-high_low_speed_mode>` is done in three steps:
+.. only:: esp32
+
+    Setting up a channel of the LEDC in either :ref:`high or low speed mode <ledc-api-high_low_speed_mode>` is done in three steps:
+
+
+.. only:: not esp32
+
+    Setting up a channel of the LEDC is done in three steps. Note that unlike ESP32, {IDF_TARGET_NAME} only supports configuring channels in "low speed" mode.
 
 1. :ref:`ledc-api-configure-timer` by specifying the PWM signal's frequency and duty cycle resolution.
 2. :ref:`ledc-api-configure-channel` by associating it with the timer and GPIO to output the PWM signal.
 3. :ref:`ledc-api-change-pwm-signal` that drives the output in order to change LED's intensity. This can be done under the full control of software or with hardware fading functions.
 
-As an optional step, it is also possible to set up an interrupt on the fade end.
+As an optional step, it is also possible to set up an interrupt on fade end.
 
 .. figure:: ../../../_static/ledc-api-settings.jpg
     :align: center
@@ -32,25 +45,28 @@ As an optional step, it is also possible to set up an interrupt on the fade end.
 
 .. _ledc-api-configure-timer:
 
-Configure Timer
-^^^^^^^^^^^^^^^
+Timer Configuration 
+^^^^^^^^^^^^^^^^^^^
 
-Setting the timer is done by calling the function :cpp:func:`ledc_timer_config` and passing to it a data structure :cpp:type:`ledc_timer_config_t` that contains the following configuration settings:
+Setting the timer is done by calling the function :cpp:func:`ledc_timer_config` and passing the data structure :cpp:type:`ledc_timer_config_t` that contains the following configuration settings:
 
+.. list::
+
+    :esp32:     - Speed mode :cpp:type:`ledc_mode_t`
+    :not esp32: - Speed mode (value must be ``LEDC_LOW_SPEED_MODE``)
     - Timer number :cpp:type:`ledc_timer_t`
-    - Speed mode :cpp:type:`ledc_mode_t`
     - PWM signal frequency
     - Resolution of PWM duty
 
-The frequency and the duty resolution are interdependent. The higher the PWM frequency, the lower duty resolution is available, and vice versa. This relationship might be important if you are planning to use this API for purposes other than changing the intensity of LEDs. For more details, see Section :ref:`ledc-api-supported-range-frequency-duty-resolution`.
+The frequency and the duty resolution are interdependent. The higher the PWM frequency, the lower the duty resolution which is available, and vice versa. This relationship might be important if you are planning to use this API for purposes other than changing the intensity of LEDs. For more details, see Section :ref:`ledc-api-supported-range-frequency-duty-resolution`.
 
 
 .. _ledc-api-configure-channel:
 
-Configure Channel
-^^^^^^^^^^^^^^^^^
+Channel Configuration
+^^^^^^^^^^^^^^^^^^^^^
 
-When the timer is set up, configure a selected channel (one out of :cpp:type:`ledc_channel_t`). This is done by calling the function :cpp:func:`ledc_channel_config`.
+When the timer is set up, configure the desired channel (one out of :cpp:type:`ledc_channel_t`). This is done by calling the function :cpp:func:`ledc_channel_config`.
 
 Similar to the timer configuration, the channel setup function should be passed a structure :cpp:type:`ledc_channel_config_t` that contains the channel's configuration parameters.
 
@@ -66,11 +82,17 @@ Once the channel starts operating and generating the PWM signal with the constan
 
 The following two sections describe how to change the duty cycle using software and hardware fading. If required, the signal's frequency can also be changed; it is covered in Section :ref:`ledc-api-change-pwm-frequency`.
 
+.. only:: esp32s2 or esp32c3
+
+    .. note::
+
+        All the timers and channels in the {IDF_TARGET_NAME}'s LED PWM Controller only support low speed mode. Any change of PWM settings must be explicitly triggered by software (see below).
+
 
 Change PWM Duty Cycle Using Software
 """"""""""""""""""""""""""""""""""""
 
-To set the duty cycle, use the dedicated function :cpp:func:`ledc_set_duty`. After that, call :cpp:func:`ledc_update_duty` to activeate the changes. To check the currently set value, use the corresponding ``_get_`` function :cpp:func:`ledc_get_duty`.
+To set the duty cycle, use the dedicated function :cpp:func:`ledc_set_duty`. After that, call :cpp:func:`ledc_update_duty` to activate the changes. To check the currently set value, use the corresponding ``_get_`` function :cpp:func:`ledc_get_duty`.
 
 Another way to set the duty cycle, as well as some other channel parameters, is by calling :cpp:func:`ledc_channel_config` covered in Section :ref:`ledc-api-configure-channel`.
 
@@ -113,35 +135,38 @@ There are several lower level timer-specific functions that can be used to chang
 * :cpp:func:`ledc_timer_pause`
 * :cpp:func:`ledc_timer_resume`
 
-The first two functions are called "behind the scenes" by :cpp:func:`ledc_channel_config` to provide a "clean" startup of a timer after it is configured.
+The first two functions are called "behind the scenes" by :cpp:func:`ledc_channel_config` to provide a startup of a timer after it is configured.
 
 
 Use Interrupts
 ^^^^^^^^^^^^^^
 
-When configuring an LEDC channel, one of the parameters selected within :cpp:type:`ledc_channel_config_t` is :cpp:type:`ledc_intr_type_t` which triggers an interrupt on fade completion. 
+When configuring an LEDC channel, one of the parameters selected within :cpp:type:`ledc_channel_config_t` is :cpp:type:`ledc_intr_type_t` which triggers an interrupt on fade completion.
 
 For registration of a handler to address this interrupt, call :cpp:func:`ledc_isr_register`.
 
 
-.. _ledc-api-high_low_speed_mode:
+.. only:: esp32
 
-LEDC High and Low Speed Mode
-----------------------------
+    .. _ledc-api-high_low_speed_mode:
+    
+    LEDC High and Low Speed Mode
+    ----------------------------
 
-Of the total 8 timers and 16 channels available in the LED PWM Controller, half of them are dedicated to operation in high speed mode and the other half in low speed mode. Selection of a low or high speed timer or channel is done with the parameter :cpp:type:`ledc_mode_t` that can be found in applicable function calls.
+    High speed mode enables a glitch-free changeover of timer settings. This means that if the timer settings are modified, the changes will be applied automatically on the next overflow interrupt of the timer. In contrast, when updating the low-speed timer, the change of settings should be explicitly triggered by software. The LEDC driver handles it in the background, e.g., when :cpp:func:`ledc_timer_config` or :cpp:func:`ledc_timer_set` is called. 
 
-The advantage of high speed mode is hardware-supported, glitch-free changeover of the timer settings. This means that if the timer settings are modified, the changes will be applied automatically on the next overflow interrupt of the timer. In contrast, when updating the low-speed timer, the change of settings should be explicitly triggered by software. The LEDC driver handles it in the background, e.g., when :cpp:func:`ledc_timer_config` or :cpp:func:`ledc_timer_set` is called. 
+    For additional details regarding speed modes, see *{IDF_TARGET_NAME} Technical Reference Manual* > *LED PWM Controller (LEDC)* [`PDF <{IDF_TARGET_TRM_EN_URL}#ledpwm>`__]. Please note that the support for ``SLOW_CLOCK`` mentioned in this manual is not yet supported in the LEDC driver.
 
-For additional details regarding speed modes, refer to `ESP32 Technical Reference Manual <https://espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf>`_ (PDF). Please note that the support for ``SLOW_CLOCK`` mentioned in this manual is not yet supported in the LEDC driver.
+    .. _ledc-api-supported-range-frequency-duty-resolution:
 
+.. only:: not esp32
 
-.. _ledc-api-supported-range-frequency-duty-resolution:
+    .. _ledc-api-supported-range-frequency-duty-resolution:
 
 Supported Range of Frequency and Duty Resolutions
 -------------------------------------------------
 
-The LED PWM Controller is designed primarily to drive LEDs. It provides a wide resolution for PWM duty cycle settings. For instance, the PWM frequency of 5 kHz can have the maximum duty resolution of 13 bits. It means that the duty can be set anywhere from 0 to 100% with a resolution of ~0.012% (2 ** 13 = 8192 discrete levels of the LED intensity).
+The LED PWM Controller is designed primarily to drive LEDs. It provides a large flexibility of PWM duty cycle settings. For instance, the PWM frequency of 5 kHz can have the maximum duty resolution of 13 bits. This means that the duty can be set anywhere from 0 to 100% with a resolution of ~0.012% (2 ** 13 = 8192 discrete levels of the LED intensity). Note, however, that these parameters depend on the clock signal clocking the LED PWM Controller timer which in turn clocks the channel (see :ref:`timer configuration<ledc-api-configure-timer>` and the *{IDF_TARGET_NAME} Technical Reference Manual* > *LED PWM Controller (LEDC)* [`PDF <{IDF_TARGET_TRM_EN_URL}#ledpwm>`__]).
 
 The LEDC can be used for generating signals at much higher frequencies that are sufficient enough to clock other devices, e.g., a digital camera module. In this case, the maximum available frequency is 40 MHz with duty resolution of 1 bit. This means that the duty cycle is fixed at 50% and cannot be adjusted.
 
@@ -161,17 +186,19 @@ The LEDC driver will also capture and report attempts to configure frequency / d
 
     E (196) ledc: requested frequency and duty resolution cannot be achieved, try increasing freq_hz or duty_resolution. div_param=128000000
 
-The duty resolution is normally set using :cpp:type:`ledc_timer_bit_t`. This enumeration covers the range from 10 to 15 bits. If a smaller duty resolution is required (from 10 down to 1), enter the equivalent numeric values directly. 
+The duty resolution is normally set using :cpp:type:`ledc_timer_bit_t`. This enumeration covers the range from 10 to 15 bits. If a smaller duty resolution is required (from 10 down to 1), enter the equivalent numeric values directly.
 
 
 Application Example
 -------------------
 
-The LEDC change duty cycle and fading control example: :example:`peripherals/ledc`.
+The LEDC change duty cycle and fading control example: :example:`peripherals/ledc/ledc_fade`.
 
+The LEDC basic example: :example:`peripherals/ledc/ledc_basic`.
 
 API Reference
 -------------
 
-.. include:: /_build/inc/ledc.inc
+.. include-build-file:: inc/ledc.inc
+.. include-build-file:: inc/ledc_types.inc
 

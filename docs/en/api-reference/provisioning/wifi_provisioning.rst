@@ -22,7 +22,7 @@ Initialization
             .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
         };
 
-        ESP_ERR_CHECK( wifi_prov_mgr_init(config) );
+        ESP_ERROR_CHECK( wifi_prov_mgr_init(config) );
 
 
 The configuration structure ``wifi_prov_mgr_config_t`` has a few fields to specify the behavior desired of the manager :
@@ -105,7 +105,7 @@ If provisioning state needs to be reset, any of the following approaches may be 
     ::
 
         bool provisioned = false;
-        ESP_ERR_CHECK( wifi_prov_mgr_is_provisioned(&provisioned) );
+        ESP_ERROR_CHECK( wifi_prov_mgr_is_provisioned(&provisioned) );
 
 
 Start Provisioning Service
@@ -133,7 +133,7 @@ See :doc:`Provisioning<provisioning>` for details about the security features.
         wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
         const char *pop = "abcd1234";
 
-        ESP_ERR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
+        ESP_ERROR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
 
 
 The provisioning service will automatically finish only if it receives valid Wi-Fi AP credentials followed by successfully connection of device to the AP (IP obtained). Regardless of that, the provisioning service can be stopped at any moment by making a call to :cpp:func:`wifi_prov_mgr_stop_provisioning()`.
@@ -155,7 +155,7 @@ There are two ways for making this possible. The simpler way is to use a blockin
     ::
 
         // Start provisioning service
-        ESP_ERR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
+        ESP_ERROR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
 
         // Wait for service to complete
         wifi_prov_mgr_wait();
@@ -269,18 +269,36 @@ On the other hand, if device was not able to connect using the provided Wi-Fi cr
 
 If this default behavior is not desired, it can be disabled by calling :cpp:func:`wifi_prov_mgr_disable_auto_stop()`. Now the provisioning service will only be stopped after an explicit call to :cpp:func:`wifi_prov_mgr_stop_provisioning()`, which returns immediately after scheduling a task for stopping the service. The service stops after a certain delay and WIFI_PROV_END event gets emitted. This delay is specified by the argument to :cpp:func:`wifi_prov_mgr_disable_auto_stop()`.
 
-The customized behavior is useful for applications which want the provisioning service to be stopped some time after the Wi-Fi connection is successfully established. For example, if the application requires the device to connect to some cloud service and obtain another set of credentials, and exchange this credentials over a custom protocomm endpoint, then after sucessfully doing so stop the provisioning service by calling :cpp:func:`wifi_prov_mgr_stop_provisioning()` inside the protocomm handler itself. The right amount of delay ensures that the transport resources are freed only after the response from the protocomm handler reaches the client side application.
+The customized behavior is useful for applications which want the provisioning service to be stopped some time after the Wi-Fi connection is successfully established. For example, if the application requires the device to connect to some cloud service and obtain another set of credentials, and exchange this credentials over a custom protocomm endpoint, then after successfully doing so stop the provisioning service by calling :cpp:func:`wifi_prov_mgr_stop_provisioning()` inside the protocomm handler itself. The right amount of delay ensures that the transport resources are freed only after the response from the protocomm handler reaches the client side application.
 
 Application Examples
 --------------------
 
-For complete example implementation see :example:`provisioning/manager`
+For complete example implementation see :example:`provisioning/wifi_prov_mgr`
+
+Provisioning Tools
+--------------------
+
+Provisioning applications are available for various platforms, along with source code:
+
+* Android:
+    * `BLE Provisioning app on Play Store <https://play.google.com/store/apps/details?id=com.espressif.provble>`_.
+    * `SoftAP Provisioning app on Play Store <https://play.google.com/store/apps/details?id=com.espressif.provsoftap>`_.
+    * Source code on GitHub: `esp-idf-provisioning-android <https://github.com/espressif/esp-idf-provisioning-android>`_.
+* iOS:
+    * `BLE Provisioning app on app store <https://apps.apple.com/in/app/esp-ble-provisioning/id1473590141>`_.
+    * `SoftAP Provisioning app on app Store <https://apps.apple.com/in/app/esp-softap-provisioning/id1474040630>`_.
+    * Source code on GitHub: `esp-idf-provisioning-ios <https://github.com/espressif/esp-idf-provisioning-ios>`_.
+* Linux/MacOS/Windows : :idf:`tools/esp_prov` (a python based command line tool for provisioning)
+
+The phone applications offer simple UI and thus more user centric, while the command line application is useful as a debugging tool for developers.
+
 
 API Reference
 -------------
 
-.. include:: /_build/inc/manager.inc
-.. include:: /_build/inc/scheme_ble.inc
-.. include:: /_build/inc/scheme_softap.inc
-.. include:: /_build/inc/scheme_console.inc
-.. include:: /_build/inc/wifi_config.inc
+.. include-build-file:: inc/manager.inc
+.. include-build-file:: inc/scheme_ble.inc
+.. include-build-file:: inc/scheme_softap.inc
+.. include-build-file:: inc/scheme_console.inc
+.. include-build-file:: inc/wifi_config.inc

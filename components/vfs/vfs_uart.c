@@ -22,10 +22,13 @@
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
 #include "esp_attr.h"
+#include "soc/uart_periph.h"
 #include "driver/uart.h"
 #include "sdkconfig.h"
 #include "driver/uart_select.h"
-#include "esp32/rom/uart.h"
+#include "esp_rom_uart.h"
+#include "soc/soc_caps.h"
+#include "hal/uart_ll.h"
 
 // TODO: make the number of UARTs chip dependent
 #define UART_NUM SOC_UART_NUM
@@ -111,6 +114,8 @@ static vfs_uart_context_t* s_ctx[UART_NUM] = {
 #endif
 };
 
+#ifdef CONFIG_VFS_SUPPORT_SELECT
+
 typedef struct {
     esp_vfs_select_sem_t select_sem;
     fd_set *readfds;
@@ -126,6 +131,8 @@ static int s_registered_select_num = 0;
 static portMUX_TYPE s_registered_select_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static esp_err_t uart_end_select(void *end_select_args);
+
+#endif // CONFIG_VFS_SUPPORT_SELECT
 
 static int uart_open(const char * path, int flags, int mode)
 {
@@ -152,10 +159,13 @@ static int uart_open(const char * path, int flags, int mode)
 static void uart_tx_char(int fd, int c)
 {
     uart_dev_t* uart = s_ctx[fd]->uart;
-    while (uart->status.txfifo_cnt >= 127) {
+    const uint8_t ch = (uint8_t) c;
+
+    while (uart_ll_get_txfifo_len(uart) < 2) {
         ;
     }
-    uart->fifo.rw_byte = c;
+
+    uart_ll_write_txfifo(uart, &ch, 1);
 }
 
 static void uart_tx_char_via_driver(int fd, int c)
@@ -167,10 +177,13 @@ static void uart_tx_char_via_driver(int fd, int c)
 static int uart_rx_char(int fd)
 {
     uart_dev_t* uart = s_ctx[fd]->uart;
-    if (uart->status.rxfifo_cnt == 0) {
+    uint8_t ch;
+    if (uart_ll_get_rxfifo_len(uart) == 0) {
         return NONE;
     }
-    return uart->fifo.rw_byte;
+    uart_ll_read_rxfifo(uart, &ch, 1);
+
+    return ch;
 }
 
 static int uart_rx_char_via_driver(int fd)
@@ -278,6 +291,7 @@ static ssize_t uart_read(int fd, void* data, size_t size)
 static int uart_fstat(int fd, struct stat * st)
 {
     assert(fd >=0 && fd < 3);
+    memset(st, 0, sizeof(*st));
     st->st_mode = S_IFCHR;
     return 0;
 }
@@ -306,6 +320,8 @@ static int uart_fcntl(int fd, int cmd, int arg)
     return result;
 }
 
+#ifdef CONFIG_VFS_SUPPORT_DIR
+
 static int uart_access(const char *path, int amode)
 {
     int ret = -1;
@@ -327,14 +343,18 @@ static int uart_access(const char *path, int amode)
     return ret;
 }
 
+#endif // CONFIG_VFS_SUPPORT_DIR
+
 static int uart_fsync(int fd)
 {
     assert(fd >= 0 && fd < 3);
     _lock_acquire_recursive(&s_ctx[fd]->write_lock);
-    uart_tx_wait_idle((uint8_t) fd);
+    esp_rom_uart_tx_wait_idle((uint8_t) fd);
     _lock_release_recursive(&s_ctx[fd]->write_lock);
     return 0;
 }
+
+#ifdef CONFIG_VFS_SUPPORT_SELECT
 
 static esp_err_t register_select(uart_select_args_t *args)
 {
@@ -343,9 +363,11 @@ static esp_err_t register_select(uart_select_args_t *args)
     if (args) {
         portENTER_CRITICAL(&s_registered_select_lock);
         const int new_size = s_registered_select_num + 1;
-        if ((s_registered_selects = realloc(s_registered_selects, new_size * sizeof(uart_select_args_t *))) == NULL) {
+        uart_select_args_t **new_selects;
+        if ((new_selects = realloc(s_registered_selects, new_size * sizeof(uart_select_args_t *))) == NULL) {
             ret = ESP_ERR_NO_MEM;
         } else {
+            s_registered_selects = new_selects;
             s_registered_selects[s_registered_select_num] = args;
             s_registered_select_num = new_size;
             ret = ESP_OK;
@@ -369,12 +391,9 @@ static esp_err_t unregister_select(uart_select_args_t *args)
                 // last item.
                 s_registered_selects[i] = s_registered_selects[new_size];
                 s_registered_selects = realloc(s_registered_selects, new_size * sizeof(uart_select_args_t *));
-                if (s_registered_selects || new_size == 0) {
-                    s_registered_select_num = new_size;
-                    ret = ESP_OK;
-                } else {
-                    ret = ESP_ERR_NO_MEM;
-                }
+                // Shrinking a buffer with realloc is guaranteed to succeed.
+                s_registered_select_num = new_size;
+                ret = ESP_OK;
                 break;
             }
         }
@@ -419,6 +438,14 @@ static esp_err_t uart_start_select(int nfds, fd_set *readfds, fd_set *writefds, 
 {
     const int max_fds = MIN(nfds, UART_NUM);
     *end_select_args = NULL;
+
+    for (int i = 0; i < max_fds; ++i) {
+        if (FD_ISSET(i, readfds) || FD_ISSET(i, writefds) || FD_ISSET(i, exceptfds)) {
+            if (!uart_is_driver_installed(i)) {
+                return ESP_ERR_INVALID_STATE;
+            }
+        }
+    }
 
     uart_select_args_t *args = malloc(sizeof(uart_select_args_t));
 
@@ -474,10 +501,6 @@ static esp_err_t uart_end_select(void *end_select_args)
 {
     uart_select_args_t *args = end_select_args;
 
-    if (args) {
-        free(args);
-    }
-
     portENTER_CRITICAL(uart_get_selectlock());
     esp_err_t ret = unregister_select(args);
     for (int i = 0; i < UART_NUM; ++i) {
@@ -485,8 +508,14 @@ static esp_err_t uart_end_select(void *end_select_args)
     }
     portEXIT_CRITICAL(uart_get_selectlock());
 
+    if (args) {
+        free(args);
+    }
+
     return ret;
 }
+
+#endif // CONFIG_VFS_SUPPORT_SELECT
 
 #ifdef CONFIG_VFS_SUPPORT_TERMIOS
 static int uart_tcsetattr(int fd, int optional_actions, const struct termios *p)
@@ -951,9 +980,13 @@ void esp_vfs_dev_uart_register(void)
         .read = &uart_read,
         .fcntl = &uart_fcntl,
         .fsync = &uart_fsync,
+#ifdef CONFIG_VFS_SUPPORT_DIR
         .access = &uart_access,
+#endif // CONFIG_VFS_SUPPORT_DIR
+#ifdef CONFIG_VFS_SUPPORT_SELECT
         .start_select = &uart_start_select,
         .end_select = &uart_end_select,
+#endif // CONFIG_VFS_SUPPORT_SELECT
 #ifdef CONFIG_VFS_SUPPORT_TERMIOS
         .tcsetattr = &uart_tcsetattr,
         .tcgetattr = &uart_tcgetattr,
@@ -962,6 +995,26 @@ void esp_vfs_dev_uart_register(void)
 #endif // CONFIG_VFS_SUPPORT_TERMIOS
     };
     ESP_ERROR_CHECK(esp_vfs_register("/dev/uart", &vfs, NULL));
+}
+
+int esp_vfs_dev_uart_port_set_rx_line_endings(int uart_num, esp_line_endings_t mode)
+{
+    if (uart_num < 0 || uart_num >= UART_NUM) {
+        errno = EBADF;
+        return -1;
+    }
+    s_ctx[uart_num]->rx_mode = mode;
+    return 0;
+}
+
+int esp_vfs_dev_uart_port_set_tx_line_endings(int uart_num, esp_line_endings_t mode)
+{
+    if (uart_num < 0 || uart_num >= UART_NUM) {
+        errno = EBADF;
+        return -1;
+    }
+    s_ctx[uart_num]->tx_mode = mode;
+    return 0;
 }
 
 void esp_vfs_dev_uart_set_rx_line_endings(esp_line_endings_t mode)

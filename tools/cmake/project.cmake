@@ -6,16 +6,31 @@ cmake_minimum_required(VERSION 3.5)
 # call.
 include(${CMAKE_CURRENT_LIST_DIR}/idf.cmake)
 
+# setting PYTHON variable here for compatibility only, new code should use
+# idf_build_get_property(variable PYTHON)
+idf_build_get_property(PYTHON PYTHON)
+if(NOT PYTHON)
+    message(FATAL_ERROR "Internal error, PYTHON build property not set correctly.")
+endif()
+
+# legacy variable for compatibility
 set(IDFTOOL ${PYTHON} "${IDF_PATH}/tools/idf.py")
-# Internally, the Python interpreter is already set to 'python'. Re-set here
-# to be absolutely sure.
-set_default(PYTHON "python")
-idf_build_set_property(PYTHON ${PYTHON})
 
 # On processing, checking Python required modules can be turned off if it was
 # already checked externally.
 if(PYTHON_DEPS_CHECKED)
     idf_build_set_property(__CHECK_PYTHON 0)
+endif()
+
+# Store CMake arguments that need to be passed into all CMake sub-projects as well
+# (bootloader, ULP, etc)
+#
+# It's not possible to tell if CMake was called with --warn-uninitialized, so to also
+# have these warnings in sub-projects we set a cache variable as well and then check that.
+if(WARN_UNINITIALIZED)
+    idf_build_set_property(EXTRA_CMAKE_ARGS --warn-uninitialized)
+else()
+    idf_build_set_property(EXTRA_CMAKE_ARGS "")
 endif()
 
 # Initialize build target for this build using the environment variable or
@@ -38,12 +53,12 @@ function(__project_get_revision var)
             if(PROJECT_VER_GIT)
                 set(PROJECT_VER ${PROJECT_VER_GIT})
             else()
-                message(STATUS "Project is not inside a git repository, \
-                        will not use 'git describe' to determine PROJECT_VER.")
+                message(STATUS "Project is not inside a git repository, or git repository has no commits;"
+                        " will not use 'git describe' to determine PROJECT_VER.")
+                set(PROJECT_VER 1)
             endif()
         endif()
     endif()
-    message(STATUS "Project version: ${PROJECT_VER}")
     set(${var} "${PROJECT_VER}" PARENT_SCOPE)
 endfunction()
 
@@ -157,6 +172,7 @@ function(__project_init components_var test_components_var)
         endif()
     endfunction()
 
+
     # Add component directories to the build, given the component filters, exclusions
     # extra directories, etc. passed from the root CMakeLists.txt.
     if(COMPONENT_DIRS)
@@ -167,18 +183,18 @@ function(__project_init components_var test_components_var)
             __project_component_dir(${component_dir})
         endforeach()
     else()
-        # Look for components in the usual places: CMAKE_CURRENT_LIST_DIR/main,
-        # CMAKE_CURRENT_LIST_DIR/components, and the extra component dirs
         if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/main")
             __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/main")
         endif()
-
-        __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/components")
 
         spaces2list(EXTRA_COMPONENT_DIRS)
         foreach(component_dir ${EXTRA_COMPONENT_DIRS})
             __project_component_dir("${component_dir}")
         endforeach()
+
+        # Look for components in the usual places: CMAKE_CURRENT_LIST_DIR/main,
+        # extra component dirs, and CMAKE_CURRENT_LIST_DIR/components
+        __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/components")
     endif()
 
     spaces2list(COMPONENTS)
@@ -246,7 +262,7 @@ macro(project project_name)
     if(CCACHE_ENABLE)
         find_program(CCACHE_FOUND ccache)
         if(CCACHE_FOUND)
-            message(STATUS "ccache will be used for faster builds")
+            message(STATUS "ccache will be used for faster recompilation")
             set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
         else()
             message(WARNING "enabled ccache in build but ccache program not found")
@@ -301,25 +317,30 @@ macro(project project_name)
     # PROJECT_NAME is taken from the passed name from project() call
     # PROJECT_DIR is set to the current directory
     # PROJECT_VER is from the version text or git revision of the current repo
-    if(SDKCONFIG_DEFAULTS)
-        get_filename_component(sdkconfig_defaults "${SDKCONFIG_DEFAULTS}" ABSOLUTE)
-        if(NOT EXISTS "${sdkconfig_defaults}")
-            message(FATAL_ERROR "SDKCONFIG_DEFAULTS '${sdkconfig_defaults}' does not exist.")
-        endif()
-    else()
+    set(_sdkconfig_defaults "$ENV{SDKCONFIG_DEFAULTS}")
+
+    if(NOT _sdkconfig_defaults)
         if(EXISTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
-            set(sdkconfig_defaults "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
+            set(_sdkconfig_defaults "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
         else()
-            set(sdkconfig_defaults "")
+            set(_sdkconfig_defaults "")
         endif()
     endif()
 
+    if(SDKCONFIG_DEFAULTS)
+        set(_sdkconfig_defaults "${SDKCONFIG_DEFAULTS}")
+    endif()
+
+    foreach(sdkconfig_default ${_sdkconfig_defaults})
+        get_filename_component(sdkconfig_default "${sdkconfig_default}" ABSOLUTE)
+        if(NOT EXISTS "${sdkconfig_default}")
+            message(FATAL_ERROR "SDKCONFIG_DEFAULTS '${sdkconfig_default}' does not exist.")
+        endif()
+        list(APPEND sdkconfig_defaults ${sdkconfig_default})
+    endforeach()
+
     if(SDKCONFIG)
         get_filename_component(sdkconfig "${SDKCONFIG}" ABSOLUTE)
-        if(NOT EXISTS "${sdkconfig}")
-            message(FATAL_ERROR "SDKCONFIG '${sdkconfig}' does not exist.")
-        endif()
-        set(sdkconfig ${SDKCONFIG})
     else()
         set(sdkconfig "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
     endif()
@@ -352,13 +373,16 @@ macro(project project_name)
     # so that it treats components equally.
     #
     # This behavior should only be when user did not set REQUIRES/PRIV_REQUIRES manually.
-    idf_build_get_property(build_components BUILD_COMPONENTS)
+    idf_build_get_property(build_components BUILD_COMPONENT_ALIASES)
     if(idf::main IN_LIST build_components)
         __component_get_target(main_target idf::main)
         __component_get_property(reqs ${main_target} REQUIRES)
         __component_get_property(priv_reqs ${main_target} PRIV_REQUIRES)
         idf_build_get_property(common_reqs __COMPONENT_REQUIRES_COMMON)
         if(reqs STREQUAL common_reqs AND NOT priv_reqs) #if user has not set any requirements
+            if(test_components)
+                list(REMOVE_ITEM build_components ${test_components})
+            endif()
             list(REMOVE_ITEM build_components idf::main)
             __component_get_property(lib ${main_target} COMPONENT_LIB)
             set_property(TARGET ${lib} APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${build_components}")
@@ -371,15 +395,19 @@ macro(project project_name)
 
     set(project_elf ${CMAKE_PROJECT_NAME}.elf)
 
-    # Create a dummy file to work around CMake requirement of having a source
-    # file while adding an executable
-    set(project_elf_src ${CMAKE_BINARY_DIR}/project_elf_src.c)
+    # Create a dummy file to work around CMake requirement of having a source file while adding an
+    # executable. This is also used by idf_size.py to detect the target
+    set(project_elf_src ${CMAKE_BINARY_DIR}/project_elf_src_${IDF_TARGET}.c)
     add_custom_command(OUTPUT ${project_elf_src}
         COMMAND ${CMAKE_COMMAND} -E touch ${project_elf_src}
         VERBATIM)
     add_custom_target(_project_elf_src DEPENDS "${project_elf_src}")
     add_executable(${project_elf} "${project_elf_src}")
     add_dependencies(${project_elf} _project_elf_src)
+
+    if(__PROJECT_GROUP_LINK_COMPONENTS)
+        target_link_libraries(${project_elf} "-Wl,--start-group")
+    endif()
 
     if(test_components)
         target_link_libraries(${project_elf} "-Wl,--whole-archive")
@@ -391,14 +419,16 @@ macro(project project_name)
         target_link_libraries(${project_elf} "-Wl,--no-whole-archive")
     endif()
 
-    idf_build_get_property(build_components BUILD_COMPONENTS)
+    idf_build_get_property(build_components BUILD_COMPONENT_ALIASES)
     if(test_components)
         list(REMOVE_ITEM build_components ${test_components})
     endif()
     target_link_libraries(${project_elf} ${build_components})
 
-    set(mapfile "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.map")
-    target_link_libraries(${project_elf} "-Wl,--cref -Wl,--Map=${mapfile}")
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        set(mapfile "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.map")
+        target_link_libraries(${project_elf} "-Wl,--cref -Wl,--Map=${mapfile}")
+    endif()
 
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" APPEND PROPERTY
         ADDITIONAL_MAKE_CLEAN_FILES
@@ -427,6 +457,12 @@ macro(project project_name)
         )
 
     unset(idf_size)
+
+    # Add DFU build and flash targets
+    __add_dfu_targets()
+
+    # Add UF2 build targets
+    __add_uf2_targets()
 
     idf_build_executable(${project_elf})
 

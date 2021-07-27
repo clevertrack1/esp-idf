@@ -19,12 +19,21 @@
 /* Encode the CPU ID in the LSB of the ccount value */
 inline static uint32_t get_ccount(void)
 {
-    uint32_t ccount = xthal_get_ccount() & ~3;
+    uint32_t ccount = cpu_hal_get_cycle_count() & ~3;
 #ifndef CONFIG_FREERTOS_UNICORE
     ccount |= xPortGetCoreID();
 #endif
     return ccount;
 }
+
+/* Architecture-specific return value of __builtin_return_address which
+ * should be interpreted as an invalid address.
+ */
+#ifdef __XTENSA__
+#define HEAP_ARCH_INVALID_PC  0x40000000
+#else
+#define HEAP_ARCH_INVALID_PC  0x00000000
+#endif
 
 // Caller is 2 stack frames deeper than we care about
 #define STACK_OFFSET  2
@@ -33,8 +42,10 @@ inline static uint32_t get_ccount(void)
         if (STACK_DEPTH == N) {                                         \
             return;                                                     \
         }                                                               \
-        callers[N] = __builtin_return_address(N+STACK_OFFSET);                \
-        if (!esp_ptr_executable(callers[N])) {                          \
+        callers[N] = __builtin_return_address(N+STACK_OFFSET);          \
+        if (!esp_ptr_executable(callers[N])                             \
+            || callers[N] == (void*) HEAP_ARCH_INVALID_PC) {            \
+            callers[N] = 0;                                             \
             return;                                                     \
         }                                                               \
     } while(0)

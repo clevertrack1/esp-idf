@@ -9,28 +9,18 @@ and echoes it back to the monitoring console.
 
 ### Hardware Required
 
-The example can be used with any ESP32 development board connected to a computer with a USB cable.
+The example can be used with any ESP32, ESP32-S and ESP32-C series based development board connected to a computer with a USB cable.
 
 ### Configure the project
 
 ```
 idf.py menuconfig
 ```
-or
-```
-idf.py menuconfig
-```
-
-* Set serial port under Serial Flasher Options.
 
 ### Build and Flash
 
 Build the project and flash it to the board, then run monitor tool to view serial output:
 
-```
-idf.py -p PORT flash monitor
-```
-or
 ```
 idf.py -p PORT flash monitor
 ```

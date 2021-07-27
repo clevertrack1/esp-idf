@@ -1,17 +1,28 @@
-// Copyright 2015-2019 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #pragma once
+
+#include <inttypes.h>
+
+/**
+ * @brief ESP chip ID
+ *
+ */
+typedef enum {
+    ESP_CHIP_ID_ESP32 = 0x0000,  /*!< chip ID: ESP32 */
+    ESP_CHIP_ID_ESP32S2 = 0x0002,  /*!< chip ID: ESP32-S2 */
+    ESP_CHIP_ID_ESP32C3 = 0x0005, /*!< chip ID: ESP32-C3 */
+    ESP_CHIP_ID_ESP32S3 = 0x0009, /*!< chip ID: ESP32-S3 */
+    ESP_CHIP_ID_ESP32H2 = 0x000A, /*!< chip ID: ESP32-H2 */  // ESP32H2-TODO: IDF-3475
+    ESP_CHIP_ID_INVALID = 0xFFFF /*!< Invalid chip ID (we defined it to make sure the esp_chip_id_t is 2 bytes size) */
+} __attribute__((packed)) esp_chip_id_t;
+
+/** @cond */
+_Static_assert(sizeof(esp_chip_id_t) == 2, "esp_chip_id_t should be 16 bit");
+/** @endcond */
 
 /**
  * @brief SPI flash mode, used in esp_image_header_t
@@ -63,7 +74,9 @@ typedef struct {
                                 * the IDF bootloader uses software to configure the WP
                                 * pin and sets this field to 0xEE=disabled) */
     uint8_t spi_pin_drv[3];     /*!< Drive settings for the SPI flash pins (read by ROM bootloader) */
-    uint8_t reserved[11];       /*!< Reserved bytes in ESP32 additional header space, currently unused */
+    esp_chip_id_t chip_id;      /*!< Chip identification number */
+    uint8_t min_chip_rev;       /*!< Minimum chip revision supported by image */
+    uint8_t reserved[8];       /*!< Reserved bytes in additional header space, currently unused */
     uint8_t hash_appended;      /*!< If 1, a SHA256 digest "simple hash" (of the entire image) is appended after the checksum.
                                  * Included in image length. This digest
                                  * is separate to secure boot and only used for detecting corruption.

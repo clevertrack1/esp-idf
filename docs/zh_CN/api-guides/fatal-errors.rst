@@ -9,7 +9,7 @@
 
 在某些情况下，程序并不会按照我们的预期运行，在 ESP-IDF 中，这些情况包括：
 
-- CPU 异常：非法指令，加载/存储时的内存对齐错误，加载/存储时的访问权限错误，双重异常。
+- CPU 异常：|CPU_EXCEPTIONS_LIST|
 - 系统级检查错误：
 
   - :doc:`中断看门狗 <../api-reference/system/wdts>` 超时
@@ -19,6 +19,7 @@
   - 堆栈溢出
   - Stack 粉碎保护检查
   - Heap 完整性检查
+  - 未定义行为清理器（UBSAN）检查
 
 - 使用 ``assert``、``configASSERT`` 等类似的宏断言失败。
 
@@ -29,39 +30,47 @@
 
 :ref:`Overview` 中列举的所有错误都会由 *紧急处理程序（Panic Handler）* 负责处理。
 
-紧急处理程序首先会将出错原因打印到控制台，例如 CPU 异常的错误信息通常会类似于::
+紧急处理程序首先会将出错原因打印到控制台，例如 CPU 异常的错误信息通常会类似于
 
-    Guru Meditation Error: Core 0 panic'ed (IllegalInstruction). Exception was unhandled.
+.. parsed-literal::
 
-对于一些系统级检查错误（如中断看门狗超时，高速缓存访问错误等），错误信息会类似于::
+    Guru Meditation Error: Core 0 panic'ed (|ILLEGAL_INSTR_MSG|). Exception was unhandled.
 
-    Guru Meditation Error: Core 0 panic'ed (Cache disabled but cached memory region accessed)
+对于一些系统级检查错误（如中断看门狗超时，高速缓存访问错误等），错误信息会类似于
+
+.. parsed-literal::
+
+    Guru Meditation Error: Core 0 panic'ed (|CACHE_ERR_MSG|). Exception was unhandled.
 
 不管哪种情况，错误原因都会被打印在括号中。请参阅 :ref:`Guru-Meditation-Errors` 以查看所有可能的出错原因。
 
-紧急处理程序接下来的行为将取决于 :ref:`CONFIG_ESP32_PANIC` 的设置，支持的选项包括：
+紧急处理程序接下来的行为将取决于 :ref:`CONFIG_ESP_SYSTEM_PANIC` 的设置，支持的选项包括：
 
-- 打印 CPU 寄存器，然后重启（``CONFIG_ESP32_PANIC_PRINT_REBOOT``）- 默认选项
+- 打印 CPU 寄存器，然后重启（``CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT``）- 默认选项
 
   打印系统发生异常时 CPU 寄存器的值，打印回溯，最后重启芯片。
 
-- 打印 CPU 寄存器，然后暂停（``CONFIG_ESP32_PANIC_PRINT_HALT``）
+- 打印 CPU 寄存器，然后暂停（``CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT``）
 
   与上一个选项类似，但不会重启，而是选择暂停程序的运行。重启程序需要外部执行复位操作。
 
-- 静默重启（``CONFIG_ESP32_PANIC_SILENT_REBOOT``）
+- 静默重启（``CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT``）
 
   不打印 CPU 寄存器的值，也不打印回溯，立即重启芯片。
 
-- 调用 GDB Stub（``CONFIG_ESP32_PANIC_GDBSTUB``）
+- 调用 GDB Stub（``CONFIG_ESP_SYSTEM_PANIC_GDBSTUB``）
 
   启动 GDB 服务器，通过控制台 UART 接口与 GDB 进行通信。详细信息请参阅 :ref:`GDB-Stub`。
 
 紧急处理程序的行为还受到另外两个配置项的影响：
 
-- 如果 :ref:`CONFIG_ESP32_DEBUG_OCDAWARE` 被使能了（默认），紧急处理程序会检测 ESP32 是否已经连接 JTAG 调试器。如果检测成功，程序会暂停运行，并将控制权交给调试器。在这种情况下，寄存器和回溯不会被打印到控制台，并且也不会使用 GDB Stub 和 Core Dump 的功能。
+- 如果使能了 :ref:`CONFIG_{IDF_TARGET_CFG_PREFIX}_DEBUG_OCDAWARE` （默认），紧急处理程序会检测 {IDF_TARGET_NAME} 是否已经连接 JTAG 调试器。如果检测成功，程序会暂停运行，并将控制权交给调试器。在这种情况下，寄存器和回溯不会被打印到控制台，并且也不会使用 GDB Stub 和 Core Dump 的功能。
 
-- 如果使能了 :doc:`Core Dump <core_dump>` 功能（``CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH`` 或者 ``CONFIG_ESP32_ENABLE_COREDUMP_TO_UART`` 选项），系统状态（任务堆栈和寄存器）会被转储到 Flash 或者 UART 以供后续分析。
+- 如果使能了 :doc:`内核转储 <core_dump>` 功能，系统状态（任务堆栈和寄存器）会被转储到 Flash 或者 UART 以供后续分析。
+
+- 如果 :ref:`CONFIG_ESP_PANIC_HANDLER_IRAM` 被禁用（默认情况下禁用），紧急处理程序的代码会放置在 Flash 而不是 IRAM 中。这意味着，如果 ESP-IDF 在 Flash 高速缓存禁用时崩溃，在运行 GDB Stub 和内核转储之前紧急处理程序会自动重新使能 Flash 高速缓存。如果 Flash 高速缓存也崩溃了，这样做会增加一些小风险。
+
+  如果使能了该选项，紧急处理程序的代码（包括所需的 UART 函数）会放置在 IRAM 中。当禁用 Flash 高速缓存（如写入 SPI flash）时或触发异常导致 Flash 高速缓存崩溃时，可用此选项调试一些复杂的崩溃问题。
 
 下图展示了紧急处理程序的行为：
 
@@ -69,7 +78,7 @@
     :scale: 100%
     :caption: 紧急处理程序流程图（点击放大）
     :align: center
-    
+
     blockdiag panic-handler {
         orientation = portrait;
         edge_layout = flowchart;
@@ -111,44 +120,92 @@
 寄存器转储与回溯
 ----------------
 
-除非启用了 ``CONFIG_ESP32_PANIC_SILENT_REBOOT`` 否则紧急处理程序会将 CPU 寄存器和回溯打印到控制台::
+除非启用了 ``CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT`` 否则紧急处理程序会将 CPU 寄存器和回溯打印到控制台
 
-    Core 0 register dump:
-    PC      : 0x400e14ed  PS      : 0x00060030  A0      : 0x800d0805  A1      : 0x3ffb5030  
-    A2      : 0x00000000  A3      : 0x00000001  A4      : 0x00000001  A5      : 0x3ffb50dc  
-    A6      : 0x00000000  A7      : 0x00000001  A8      : 0x00000000  A9      : 0x3ffb5000  
-    A10     : 0x00000000  A11     : 0x3ffb2bac  A12     : 0x40082d1c  A13     : 0x06ff1ff8  
-    A14     : 0x3ffb7078  A15     : 0x00000000  SAR     : 0x00000014  EXCCAUSE: 0x0000001d  
-    EXCVADDR: 0x00000000  LBEG    : 0x4000c46c  LEND    : 0x4000c477  LCOUNT  : 0xffffffff  
+.. only:: CONFIG_IDF_TARGET_ARCH_XTENSA
 
-    Backtrace: 0x400e14ed:0x3ffb5030 0x400d0802:0x3ffb5050
+    ::
+
+        Core 0 register dump:
+        PC      : 0x400e14ed  PS      : 0x00060030  A0      : 0x800d0805  A1      : 0x3ffb5030
+        A2      : 0x00000000  A3      : 0x00000001  A4      : 0x00000001  A5      : 0x3ffb50dc
+        A6      : 0x00000000  A7      : 0x00000001  A8      : 0x00000000  A9      : 0x3ffb5000
+        A10     : 0x00000000  A11     : 0x3ffb2bac  A12     : 0x40082d1c  A13     : 0x06ff1ff8
+        A14     : 0x3ffb7078  A15     : 0x00000000  SAR     : 0x00000014  EXCCAUSE: 0x0000001d
+        EXCVADDR: 0x00000000  LBEG    : 0x4000c46c  LEND    : 0x4000c477  LCOUNT  : 0xffffffff
+
+        Backtrace: 0x400e14ed:0x3ffb5030 0x400d0802:0x3ffb5050
+
+.. only:: CONFIG_IDF_TARGET_ARCH_RISCV
+
+    ::
+
+        Core  0 register dump:
+        MEPC    : 0x420048b4  RA      : 0x420048b4  SP      : 0x3fc8f2f0  GP      : 0x3fc8a600
+        TP      : 0x3fc8a2ac  T0      : 0x40057fa6  T1      : 0x0000000f  T2      : 0x00000000
+        S0/FP   : 0x00000000  S1      : 0x00000000  A0      : 0x00000001  A1      : 0x00000001
+        A2      : 0x00000064  A3      : 0x00000004  A4      : 0x00000001  A5      : 0x00000000
+        A6      : 0x42001fd6  A7      : 0x00000000  S2      : 0x00000000  S3      : 0x00000000
+        S4      : 0x00000000  S5      : 0x00000000  S6      : 0x00000000  S7      : 0x00000000
+        S8      : 0x00000000  S9      : 0x00000000  S10     : 0x00000000  S11     : 0x00000000
+        T3      : 0x00000000  T4      : 0x00000000  T5      : 0x00000000  T6      : 0x00000000
+        MSTATUS : 0x00001881  MTVEC   : 0x40380001  MCAUSE  : 0x00000007  MTVAL   : 0x00000000
+        MHARTID : 0x00000000
 
 仅会打印异常帧中 CPU 寄存器的值，即引发 CPU 异常或者其它严重错误时刻的值。
 
 紧急处理程序如果是因 abort() 而调用，则不会打印寄存器转储。
 
-在某些情况下，例如中断看门狗超时，紧急处理程序会额外打印 CPU 寄存器（EPC1-EPC4）的值，以及另一个 CPU 的寄存器值和代码回溯。
+.. only:: CONFIG_IDF_TARGET_ARCH_XTENSA
 
-回溯行包含了当前任务中每个堆栈帧的 PC:SP 对（PC 是程序计数器，SP 是堆栈指针）。如果在 ISR 中发生了严重错误，回溯会同时包括被中断任务的 PC:SP 对，以及 ISR 中的 PC:SP 对。
+    在某些情况下，例如中断看门狗超时，紧急处理程序会额外打印 CPU 寄存器（EPC1-EPC4）的值，以及另一个 CPU 的寄存器值和代码回溯。
 
-如果使用了 :doc:`IDF 监视器 <tools/idf-monitor>`，该工具会将程序计数器的值转换为对应的代码位置（函数名，文件名，行号），并加以注释::
+    回溯行包含了当前任务中每个堆栈帧的 PC:SP 对（PC 是程序计数器，SP 是堆栈指针）。如果在 ISR 中发生了严重错误，回溯会同时包括被中断任务的 PC:SP 对，以及 ISR 中的 PC:SP 对。
 
-    Core 0 register dump:
-    PC      : 0x400e14ed  PS      : 0x00060030  A0      : 0x800d0805  A1      : 0x3ffb5030  
-    0x400e14ed: app_main at /Users/user/esp/example/main/main.cpp:36
+如果使用了 :doc:`IDF 监视器 <tools/idf-monitor>`，该工具会将程序计数器的值转换为对应的代码位置（函数名，文件名，行号），并加以注释
 
-    A2      : 0x00000000  A3      : 0x00000001  A4      : 0x00000001  A5      : 0x3ffb50dc  
-    A6      : 0x00000000  A7      : 0x00000001  A8      : 0x00000000  A9      : 0x3ffb5000  
-    A10     : 0x00000000  A11     : 0x3ffb2bac  A12     : 0x40082d1c  A13     : 0x06ff1ff8  
-    0x40082d1c: _calloc_r at /Users/user/esp/esp-idf/components/newlib/syscalls.c:51
+.. only:: CONFIG_IDF_TARGET_ARCH_XTENSA
 
-    A14     : 0x3ffb7078  A15     : 0x00000000  SAR     : 0x00000014  EXCCAUSE: 0x0000001d  
-    EXCVADDR: 0x00000000  LBEG    : 0x4000c46c  LEND    : 0x4000c477  LCOUNT  : 0xffffffff  
+    ::
 
-    Backtrace: 0x400e14ed:0x3ffb5030 0x400d0802:0x3ffb5050
-    0x400e14ed: app_main at /Users/user/esp/example/main/main.cpp:36
+        Core 0 register dump:
+        PC      : 0x400e14ed  PS      : 0x00060030  A0      : 0x800d0805  A1      : 0x3ffb5030
+        0x400e14ed: app_main at /Users/user/esp/example/main/main.cpp:36
 
-    0x400d0802: main_task at /Users/user/esp/esp-idf/components/esp32/cpu_start.c:470
+        A2      : 0x00000000  A3      : 0x00000001  A4      : 0x00000001  A5      : 0x3ffb50dc
+        A6      : 0x00000000  A7      : 0x00000001  A8      : 0x00000000  A9      : 0x3ffb5000
+        A10     : 0x00000000  A11     : 0x3ffb2bac  A12     : 0x40082d1c  A13     : 0x06ff1ff8
+        0x40082d1c: _calloc_r at /Users/user/esp/esp-idf/components/newlib/syscalls.c:51
+
+        A14     : 0x3ffb7078  A15     : 0x00000000  SAR     : 0x00000014  EXCCAUSE: 0x0000001d
+        EXCVADDR: 0x00000000  LBEG    : 0x4000c46c  LEND    : 0x4000c477  LCOUNT  : 0xffffffff
+
+        Backtrace: 0x400e14ed:0x3ffb5030 0x400d0802:0x3ffb5050
+        0x400e14ed: app_main at /Users/user/esp/example/main/main.cpp:36
+
+        0x400d0802: main_task at /Users/user/esp/esp-idf/components/{IDF_TARGET_PATH_NAME}/cpu_start.c:470
+
+.. only:: CONFIG_IDF_TARGET_ARCH_RISCV
+
+    ::
+
+        Core  0 register dump:
+        MEPC    : 0x420048b4  RA      : 0x420048b4  SP      : 0x3fc8f2f0  GP      : 0x3fc8a600
+        0x420048b4: app_main at /Users/user/esp/example/main/hello_world_main.c:20
+
+        0x420048b4: app_main at /Users/user/esp/example/main/hello_world_main.c:20
+
+        TP      : 0x3fc8a2ac  T0      : 0x40057fa6  T1      : 0x0000000f  T2      : 0x00000000
+        S0/FP   : 0x00000000  S1      : 0x00000000  A0      : 0x00000001  A1      : 0x00000001
+        A2      : 0x00000064  A3      : 0x00000004  A4      : 0x00000001  A5      : 0x00000000
+        A6      : 0x42001fd6  A7      : 0x00000000  S2      : 0x00000000  S3      : 0x00000000
+        0x42001fd6: uart_write at /Users/user/esp/esp-idf/components/vfs/vfs_uart.c:201
+
+        S4      : 0x00000000  S5      : 0x00000000  S6      : 0x00000000  S7      : 0x00000000
+        S8      : 0x00000000  S9      : 0x00000000  S10     : 0x00000000  S11     : 0x00000000
+        T3      : 0x00000000  T4      : 0x00000000  T5      : 0x00000000  T6      : 0x00000000
+        MSTATUS : 0x00001881  MTVEC   : 0x40380001  MCAUSE  : 0x00000007  MTVAL   : 0x00000000
+        MHARTID : 0x00000000
 
 若要查找发生严重错误的代码位置，请查看 "Backtrace" 的后面几行，发生严重错误的代码显示在顶行，后续几行显示的是调用堆栈。
 
@@ -157,7 +214,7 @@
 GDB Stub
 --------
 
-如果启用了 ``CONFIG_ESP32_PANIC_GDBSTUB`` 选项，在发生严重错误时，紧急处理程序不会复位芯片，相反，它将启动 GDB 远程协议服务器，通常称为 GDB Stub。发生这种情况时，可以让主机上运行的 GDB 实例通过 UART 端口连接到 ESP32。
+如果启用了 ``CONFIG_ESP_SYSTEM_PANIC_GDBSTUB`` 选项，在发生严重错误时，紧急处理程序不会复位芯片，相反，它将启动 GDB 远程协议服务器，通常称为 GDB Stub。发生这种情况时，可以让主机上运行的 GDB 实例通过 UART 端口连接到 ESP32。
 
 如果使用了 :doc:`IDF 监视器 <tools/idf-monitor>`，该工具会在 UART 端口检测到 GDB Stub 提示符后自动启动 GDB，输出会类似于::
 
@@ -168,7 +225,7 @@ GDB Stub
     This is free software: you are free to change and redistribute it.
     There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
     and "show warranty" for details.
-    This GDB was configured as "--host=x86_64-build_apple-darwin16.3.0 --target=xtensa-esp32-elf".
+    This GDB was configured as "--host=x86_64-build_apple-darwin16.3.0 --target={IDF_TARGET_TOOLCHAIN_PREFIX}".
     Type "show configuration" for configuration details.
     For bug reporting instructions, please see:
     <http://www.gnu.org/software/gdb/bugs/>.
@@ -181,7 +238,7 @@ GDB Stub
     0x400e1b41 in app_main ()
         at /Users/user/esp/example/main/main.cpp:36
     36      *((int*) 0) = 0;
-    (gdb) 
+    (gdb)
 
 在 GDB 会话中，我们可以检查 CPU 寄存器，本地和静态变量以及内存中任意位置的值。但是不支持设置断点，改变 PC 值或者恢复程序的运行。若要复位程序，请退出 GDB 会话，在 IDF 监视器 中连续输入 Ctrl-T Ctrl-R，或者按下开发板上的复位按键也可以重新运行程序。
 
@@ -199,63 +256,90 @@ Guru Meditation 错误
 .. note:: 想要了解 "Guru Meditation" 的历史渊源，请参阅 `维基百科 <https://en.wikipedia.org/wiki/Guru_Meditation>`_ 。
 
 
-IllegalInstruction
-^^^^^^^^^^^^^^^^^^
+|ILLEGAL_INSTR_MSG|
+^^^^^^^^^^^^^^^^^^^
 
 此 CPU 异常表示当前执行的指令不是有效指令，引起此错误的常见原因包括：
 
 - FreeRTOS 中的任务函数已返回。在 FreeRTOS 中，如果想终止任务函数，需要调用 :cpp:func:`vTaskDelete` 函数释放当前任务的资源，而不是直接返回。
 
 - 无法从 SPI Flash 中加载下一条指令，这通常发生在：
-  
+
   - 应用程序将 SPI Flash 的引脚重新配置为其它功能（如 GPIO，UART 等等）。有关 SPI Flash 引脚的详细信息，请参阅硬件设计指南和芯片/模组的数据手册。
-  
-  - 某些外部设备意外连接到 SPI Flash 的引脚上，干扰了 ESP32 和 SPI Flash 之间的通信。
 
+  - 某些外部设备意外连接到 SPI Flash 的引脚上，干扰了 {IDF_TARGET_NAME} 和 SPI Flash 之间的通信。
 
-InstrFetchProhibited
-^^^^^^^^^^^^^^^^^^^^
+.. only:: CONFIG_IDF_TARGET_ARCH_XTENSA
 
-此 CPU 异常表示 CPU 无法加载指令，因为指令的地址不在 IRAM 或者 IROM 中的有效区域中。
+    InstrFetchProhibited
+    ^^^^^^^^^^^^^^^^^^^^
 
-通常这意味着代码中调用了并不指向有效代码块的函数指针。这种情况下，可以查看 ``PC`` （程序计数器）寄存器的值并做进一步判断：若为 0 或者其它非法值（即只要不是 ``0x4xxxxxxx`` 的情况），则证实确实是该原因。
+    此 CPU 异常表示 CPU 无法加载指令，因为指令的地址不在 IRAM 或者 IROM 中的有效区域中。
 
-LoadProhibited, StoreProhibited
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    通常这意味着代码中调用了并不指向有效代码块的函数指针。这种情况下，可以查看 ``PC`` （程序计数器）寄存器的值并做进一步判断：若为 0 或者其它非法值（即只要不是 ``0x4xxxxxxx`` 的情况），则证实确实是该原因。
 
-当应用程序尝试读取或写入无效的内存位置时，会发生此类 CPU 异常。此类无效内存地址可以在寄存器转储的 ``EXCVADDR`` 中找到。如果该地址为零，通常意味着应用程序正尝试解引用一个 NULL 指针。如果该地址接近于零，则通常意味着应用程序尝试访问某个结构体的成员，但是该结构体的指针为 NULL。如果该地址是其它非法值（不在 ``0x3fxxxxxx`` - ``0x6xxxxxxx`` 的范围内），则可能意味着用于访问数据的指针未初始化或者已经损坏。
+    LoadProhibited, StoreProhibited
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-IntegerDivideByZero
-^^^^^^^^^^^^^^^^^^^
+    当应用程序尝试读取或写入无效的内存位置时，会发生此类 CPU 异常。此类无效内存地址可以在寄存器转储的 ``EXCVADDR`` 中找到。如果该地址为零，通常意味着应用程序正尝试解引用一个 NULL 指针。如果该地址接近于零，则通常意味着应用程序尝试访问某个结构体的成员，但是该结构体的指针为 NULL。如果该地址是其它非法值（不在 ``0x3fxxxxxx`` - ``0x6xxxxxxx`` 的范围内），则可能意味着用于访问数据的指针未初始化或者已经损坏。
 
-应用程序尝试将整数除以零。
+    IntegerDivideByZero
+    ^^^^^^^^^^^^^^^^^^^
 
-LoadStoreAlignment
-^^^^^^^^^^^^^^^^^^
+    应用程序尝试将整数除以零。
 
-应用程序尝试读取/写入的内存位置不符合加载/存储指令对字节对齐大小的要求，例如，32 位加载指令只能访问 4 字节对齐的内存地址，而 16 位加载指令只能访问 2 字节对齐的内存地址。
+    LoadStoreAlignment
+    ^^^^^^^^^^^^^^^^^^
 
-LoadStoreError
-^^^^^^^^^^^^^^
+    应用程序尝试读取/写入的内存位置不符合加载/存储指令对字节对齐大小的要求，例如，32 位加载指令只能访问 4 字节对齐的内存地址，而 16 位加载指令只能访问 2 字节对齐的内存地址。
 
-应用程序尝试从仅支持 32 位加载/存储的内存区域执行 8 位或 16 位加载/存储操作，例如，解引用一个指向指令内存区域的 ``char*`` 指针就会导致这样的错误。
+    LoadStoreError
+    ^^^^^^^^^^^^^^
 
-Unhandled debug exception
-^^^^^^^^^^^^^^^^^^^^^^^^^
+    这类异常通常发生于以下几种场合:
 
-这后面通常会再跟一条消息::
+    - 应用程序尝试从仅支持 32 位加载/存储的内存区域执行 8 位或 16 位加载/存储操作，例如，解引用一个指向指令内存区域（比如 IRAM 或者 IROM）的 char* 指针就会触发这个错误。
 
-    Debug exception reason: Stack canary watchpoint triggered (task_name)
+    - 应用程序尝试保存数据到只读的内存区域（比如 IROM 或者 DROM）也会触发这个错误。
 
-此错误表示应用程序写入的位置越过了 ``task_name`` 任务堆栈的末尾，请注意，并非每次堆栈溢出都会触发此错误。任务有可能会绕过堆栈金丝雀（stack canary）的位置访问堆栈，在这种情况下，监视点就不会被触发。
+    Unhandled debug exception
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    这后面通常会再跟一条消息::
+
+        Debug exception reason: Stack canary watchpoint triggered (task_name)
+
+    此错误表示应用程序写入的位置越过了 ``task_name`` 任务堆栈的末尾，请注意，并非每次堆栈溢出都会触发此错误。任务有可能会绕过堆栈金丝雀（stack canary）的位置访问堆栈，在这种情况下，监视点就不会被触发。
+
+.. only:: CONFIG_IDF_TARGET_ARCH_RISCV
+    
+    Instruction address misaligned
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    此 CPU 异常表示要执行的指令地址非 2 字节对齐。
+
+    Instruction access fault, Load access fault, Store access fault
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    当应用程序尝试读取或写入无效的内存位置时，会发生此类 CPU 异常。此类无效内存地址可以在寄存器转储的 ``MTVAL`` 中找到。如果该地址为零，通常意味着应用程序正尝试解引用一个 NULL 指针。如果该地址接近于零，则通常意味着应用程序尝试访问某个结构体的成员，但是该结构体的指针为 NULL。如果该地址是其它非法值（不在 ``0x3fxxxxxx`` - ``0x6xxxxxxx`` 的范围内），则可能意味着用于访问数据的指针未初始化或者已经损坏。
+
+    Breakpoint
+    ^^^^^^^^^^
+
+    当执行 ``EBREAK`` 指令时，会发生此 CPU 异常。
+
+    Load address misaligned, Store address misaligned
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    应用程序尝试读取/写入的内存位置不符合加载/存储指令对字节对齐大小的要求，例如，32 位加载指令只能访问 4 字节对齐的内存地址，而 16 位加载指令只能访问 2 字节对齐的内存地址。
 
 Interrupt wdt timeout on CPU0 / CPU1
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 这表示发生了中断看门狗超时，详细信息请查阅 :doc:`看门狗 <../api-reference/system/wdts>` 文档。
 
-Cache disabled but cached memory region accessed
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+|CACHE_ERR_MSG|
+^^^^^^^^^^^^^^^
 
 在某些情况下，ESP-IDF 会暂时禁止通过高速缓存访问外部 SPI Flash 和 SPI RAM，例如在使用 spi_flash API 读取/写入/擦除/映射 SPI Flash 的时候。在这些情况下，任务会被挂起，并且未使用 ``ESP_INTR_FLAG_IRAM`` 注册的中断处理程序会被禁用。请确保任何使用此标志注册的中断处理程序所访问的代码和数据分别位于 IRAM 和 DRAM 中。更多详细信息请参阅 :ref:`SPI Flash API 文档 <iram-safe-interrupt-handlers>`。
 
@@ -265,7 +349,8 @@ Cache disabled but cached memory region accessed
 欠压
 ^^^^
 
-ESP32 内部集成掉电检测电路，并且会默认启用。如果电源电压低于安全值，掉电检测器可以触发系统复位。掉电检测器可以使用 :ref:`CONFIG_ESP32_BROWNOUT_DET` 和 :ref:`CONFIG_ESP32_BROWNOUT_DET_LVL_SEL` 这两个选项进行设置。
+{IDF_TARGET_NAME} 内部集成掉电检测电路，并且会默认启用。如果电源电压低于安全值，掉电检测器可以触发系统复位。掉电检测器可以使用 :ref:`CONFIG_{IDF_TARGET_CFG_PREFIX}_BROWNOUT_DET` 和 :ref:`CONFIG_{IDF_TARGET_CFG_PREFIX}_BROWNOUT_DET_LVL_SEL` 这两个选项进行设置。
+
 当掉电检测器被触发时，会打印如下信息::
 
     Brownout detector was triggered
@@ -297,5 +382,111 @@ Stack 粉碎保护（基于 GCC ``-fstack-protector*`` 标志）可以通过 ESP
     Backtrace: 0x4008e6c0:0x3ffc1780 0x4008e8b7:0x3ffc17a0 0x400d2138:0x3ffc17c0 0x400e79d5:0x3ffc17e0 0x400e79a7:0x3ffc1840 0x400e79df:0x3ffc18a0 0x400e2235:0x3ffc18c0 0x400e1916:0x3ffc18f0 0x400e19cd:0x3ffc1910 0x400e1a11:0x3ffc1930 0x400e1bb2:0x3ffc1950 0x400d2c44:0x3ffc1a80
     0
 
-回溯信息会指明发生 Stack 粉碎的函数，建议检查函数中是否有代码访问本地数组时发生了越界。
+回溯信息会指明发生 Stack 粉碎的函数，建议检查函数中是否有代码访问局部数组时发生了越界。
 
+.. only:: CONFIG_IDF_TARGET_ARCH_XTENSA
+
+    .. |CPU_EXCEPTIONS_LIST| replace:: 非法指令，加载/存储时的内存对齐错误，加载/存储时的访问权限错误，双重异常。
+    .. |ILLEGAL_INSTR_MSG| replace:: IllegalInstruction
+    .. |CACHE_ERR_MSG| replace:: Cache disabled but cached memory region accessed
+
+.. only:: CONFIG_IDF_TARGET_ARCH_RISCV
+
+    .. |CPU_EXCEPTIONS_LIST| replace:: 非法指令，加载/存储时的内存对齐错误，加载/存储时的访问权限错误。
+    .. |ILLEGAL_INSTR_MSG| replace:: Illegal instruction
+    .. |CACHE_ERR_MSG| replace:: Cache error
+
+未定义行为清理器（UBSAN）检查
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+未定义行为清理器 (UBSAN) 是一种编译器功能，它会为可能不正确的操作添加运行时检查，例如：
+
+- 溢出（乘法溢出、有符号整数溢出）
+- 移位基数或指数错误（如移位超过 32 位）
+- 整数转换错误
+
+请参考 `GCC 文档 <https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html>`_ 中的``-fsanitize=undefined`` 选项，查看支持检查的完整列表。
+
+使能 UBSAN
+""""""""""""""
+
+默认情况下未启用 UBSAN。可以通过在构建系统中添加编译器选项 ``-fsanitize=undefined`` 在文件、组件或项目级别上使能 UBSAN。
+
+在对使用硬件寄存器头文件（``soc/xxx_reg.h``）的代码使能 UBSAN 时，建议使用 ``-fno-sanitize=shift-base`` 选项禁用移位基数清理器。这是由于 ESP-IDF 寄存器头文件目前包含的模式会对这个特定的清理器选项造成误报。
+
+要在项目级使能 UBSAN，请在项目 CMakeLists.txt 文件的末尾添加以下内容::
+
+    idf_build_set_property(COMPILE_OPTIONS "-fsanitize=undefined" "-fno-sanitize=shift-base" APPEND)
+
+或者，通过 ``EXTRA_CFLAGS`` 和 ``EXTRA_CXXFLAGS`` 环境变量来传递这些选项。
+
+使能 UBSAN 会明显增加代码量和数据大小。当为整个应用程序使能 UBSAN 时，微控制器的可用 RAM 无法容纳大多数应用程序（除了一些微小程序）。因此，建议为特定的待测组件使能 UBSAN。
+
+要为项目 CMakeLists.txt 文件中的特定组件（``component_name``）启用 UBSAN，请在文件末尾添加以下内容::
+
+    idf_component_get_property(lib component_name COMPONENT_LIB)
+    target_compile_options(${lib} PRIVATE "-fsanitize=undefined" "-fno-sanitize=shift-base")
+
+.. 注意:: 关于 :ref:`构建属性 <cmake-build-properties>` 和 :ref:`组件属性 <cmake-component-properties>` 的更多信息，请查看构建系统文档。
+
+要为同一组件的 CMakeLists.txt 中的特定组件（``component_name``）使能 UBSAN，在文件末尾添加以下内容::
+
+    target_compile_options(${COMPONENT_LIB} PRIVATE "-fsanitize=undefined" "-fno-sanitize=shift-base")
+
+UBSAN 输出
+""""""""""""""""
+
+当 UBSAN 检测到一个错误时，会打印一个信息和回溯，例如::
+
+    Undefined behavior of type out_of_bounds
+
+    Backtrace:0x4008b383:0x3ffcd8b0 0x4008c791:0x3ffcd8d0 0x4008c587:0x3ffcd8f0 0x4008c6be:0x3ffcd950 0x400db74f:0x3ffcd970 0x400db99c:0x3ffcd9a0
+
+当使用 :doc:`IDF 监视器 <tools/idf-monitor>` 时，回溯会被解码为函数名以及源代码位置，并指向问题发生的位置（这里是 ``main.c:128``）::
+
+    0x4008b383: panic_abort at /path/to/esp-idf/components/esp_system/panic.c:367
+
+    0x4008c791: esp_system_abort at /path/to/esp-idf/components/esp_system/system_api.c:106
+
+    0x4008c587: __ubsan_default_handler at /path/to/esp-idf/components/esp_system/ubsan.c:152
+
+    0x4008c6be: __ubsan_handle_out_of_bounds at /path/to/esp-idf/components/esp_system/ubsan.c:223
+
+    0x400db74f: test_ub at main.c:128
+
+    0x400db99c: app_main at main.c:56 (discriminator 1)
+
+UBSAN 报告的错误类型为以下几种：
+
+.. list-table::
+  :widths: 40 60
+  :header-rows: 1
+
+  * - 名称
+    - 含义
+  * - ``type_mismatch``、``type_mismatch_v1``
+    - 指针值不正确：空、未对齐、或与给定类型不兼容
+  * - ``add_overflow``、``sub_overflow``、``mul_overflow``、``negate_overflow``
+    - 加法、减法、乘法、求反过程中的整数溢出
+  * - ``divrem_overflow``
+    - 整数除以 0 或 ``INT_MIN``
+  * - ``shift_out_of_bounds``
+    - 左移或右移运算符导致的溢出
+  * - ``out_of_bounds``
+    - 访问超出数组范围
+  * - ``unreachable``
+    - 执行无法访问的代码
+  * - ``missing_return``
+    - Non-void 函数已结束而没有返回值（仅限 C++）
+  * - ``vla_bound_not_positive``
+    - 可变长度数组的大小不是正数
+  * - ``load_invalid_value``
+    - bool 或 enum（仅 C++）变量的值无效（超出范围）
+  * - ``nonnull_arg``
+    - 对于 ``nonnull`` 属性的函数，传递给函数的参数为空
+  * - ``nonnull_return``
+    - 对于 ``returns_nonnull`` 属性的函数，函数返回值为空
+  * - ``builtin_unreachable``
+    - 调用 ``__builtin_unreachable`` 函数
+  * - ``pointer_overflow``
+    - 指针运算过程中的溢出

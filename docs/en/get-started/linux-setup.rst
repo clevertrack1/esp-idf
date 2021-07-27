@@ -7,22 +7,25 @@ Standard Setup of Toolchain for Linux
 Install Prerequisites
 =====================
 
-To compile with ESP-IDF you need to get the following packages:
-
-- CentOS 7::
-
-    sudo yum install git wget ncurses-devel flex bison gperf python pyserial python-pyelftools cmake ninja-build ccache
+To compile with ESP-IDF you need to get the following packages. The command to run depends on which distribution of Linux you are using:
 
 - Ubuntu and Debian::
 
-    sudo apt-get install git wget libncurses-dev flex bison gperf python python-pip python-setuptools python-serial python-click python-cryptography python-future python-pyparsing python-pyelftools cmake ninja-build ccache
+    sudo apt-get install git wget flex bison gperf python3 python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+
+- CentOS 7 & 8::
+
+    sudo yum -y update && sudo yum install git wget flex bison gperf python3 python3-pip python3-setuptools cmake ninja-build ccache dfu-util libusbx
+
+CentOS 7 is still supported but CentOS version 8 is recommended for a better user experience.
 
 - Arch::
 
-    sudo pacman -S --needed gcc git make ncurses flex bison gperf python2-pip python2-pyserial python2-click python2-cryptography python2-future python2-pyparsing python2-pyelftools cmake ninja ccache
+    sudo pacman -S --needed gcc git make flex bison gperf python-pip cmake ninja ccache dfu-util libusb
 
 .. note::
-    CMake version 3.5 or newer is required for use with ESP-IDF. Older Linux distributions may require updating, enabling of a "backports" repository, or installing of a "cmake3" package rather than "cmake".
+    - CMake version 3.5 or newer is required for use with ESP-IDF. Older Linux distributions may require updating, enabling of a "backports" repository, or installing of a "cmake3" package rather than "cmake".
+    - If you do not see your Linux distribution in the above list then please check its documentation to find out which command to use for package installation.
 
 Additional Tips
 ===============
@@ -30,37 +33,17 @@ Additional Tips
 Permission issues /dev/ttyUSB0
 ------------------------------
 
-With some Linux distributions you may get the ``Failed to open port /dev/ttyUSB0`` error message when flashing the ESP32. :ref:`This can be solved by adding the current user to the dialout group<linux-dialout-group>`.
+With some Linux distributions you may get the ``Failed to open port /dev/ttyUSB0`` error message when flashing the {IDF_TARGET_NAME}. :ref:`This can be solved by adding the current user to the dialout group<linux-dialout-group>`.
 
+Python compatibility
+====================
 
-Arch Linux Users
-----------------
-
-To run the precompiled gdb (xtensa-esp32-elf-gdb) in Arch Linux requires ncurses 5, but Arch uses ncurses 6.
-
-Backwards compatibility libraries are available in AUR_ for native and lib32 configurations:
-
-- https://aur.archlinux.org/packages/ncurses5-compat-libs/
-- https://aur.archlinux.org/packages/lib32-ncurses5-compat-libs/
-
-Before installing these packages you might need to add the author's public key to your keyring as described in the "Comments" section at the links above.
-
-Alternatively, use crosstool-NG to compile a gdb that links against ncurses 6.
-
+ESP-IDF supports Python 3.6 or newer. It is recommended to upgrade your operating system to a recent version satisfying this requirement. Other options include the installation of Python from `sources <https://www.python.org/downloads/>`_ or the use of a Python version management system such as `pyenv <https://github.com/pyenv/pyenv>`_.
 
 Next Steps
 ==========
 
 To carry on with development environment setup, proceed to :ref:`get-started-get-esp-idf`.
-
-
-Related Documents
-=================
-
-.. toctree::
-    :maxdepth: 1
-
-    linux-setup-scratch
 
 
 .. _AUR: https://wiki.archlinux.org/index.php/Arch_User_Repository

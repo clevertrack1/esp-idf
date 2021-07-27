@@ -12,11 +12,11 @@ Wi-Fi
    Wi-Fi <esp_wifi>
    Smart Config <esp_smartconfig>
    ESP-NOW <esp_now>
-   ESP Mesh <esp_mesh>
+   ESP-WIFI-MESH <esp-wifi-mesh>
 
 本部分的 Wi-Fi API 示例代码存放在 ESP-IDF 示例项目的 :example:`wifi` 目录下。
 
-ESP-MESH 的示例代码存放在 ESP-IDF 示例项目的 :example:`mesh` 目录下。
+ESP-WIFI-MESH 的示例代码存放在 ESP-IDF 示例项目的 :example:`mesh` 目录下。
 
 
 以太网
@@ -36,7 +36,13 @@ IP 网络层协议
 .. toctree::
    :maxdepth: 1
 
-   TCP/IP Adapter <tcpip_adapter.rst>
+   ESP-NETIF <esp_netif.rst>
+
+.. toctree::
+   :hidden:
+
+   TCP/IP Adapter Migration Guide <tcpip_adapter_migration.rst>
+   ESP-NETIF Custom I/O Driver <esp_netif_driver.rst>
 
 TCP/IP 套接字 API 的示例代码存放在 ESP-IDF 示例项目的 :example:`protocols/sockets` 目录下。
 

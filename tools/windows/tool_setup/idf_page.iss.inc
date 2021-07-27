@@ -1,4 +1,4 @@
-{ Copyright 2019 Espressif Systems (Shanghai) PTE LTD
+{ Copyright 2019-2021 Espressif Systems (Shanghai) CO LTD
   SPDX-License-Identifier: Apache-2.0 }
 
 { ------------------------------ Page to select whether to download ESP-IDF, or use an existing copy ------------------------------ }
@@ -102,6 +102,16 @@ begin
     Result := True;
   end;
 end;
+
+<event('ShouldSkipPage')>
+function ShouldSkipIDFPage(PageID: Integer): Boolean;
+begin
+  { The page does not make sense in offline mode }
+  if (PageID = IDFPage.ID) and IsOfflineMode then begin
+    Result := True;
+  end;
+end;
+
 
 <event('InitializeWizard')>
 procedure CreateIDFPage();

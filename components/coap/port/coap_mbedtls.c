@@ -188,7 +188,7 @@ coap_dgram_write(void *ctx, const unsigned char *send_buffer,
   return result;
 }
 
-#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS)
+#if !defined(ESPIDF_VERSION) || (defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS) && defined(CONFIG_MBEDTLS_TLS_SERVER))
 static char*
 get_ip_addr(const struct coap_address_t *addr)
 {
@@ -222,9 +222,9 @@ get_ip_addr(const struct coap_address_t *addr)
   }
   return str;
 }
-#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
+#endif /* !ESPIDF_VERSION || (CONFIG_MBEDTLS_SSL_PROTO_DTLS && CONFIG_MBEDTLS_TLS_SERVER) */
 
-#if !defined(ESPIDF_VERSION) || (defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS) && defined(CONFIG_MBEDTLS_PSK_MODES))
+#if !defined(ESPIDF_VERSION) || (defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS) && defined(CONFIG_MBEDTLS_PSK_MODES) && defined(CONFIG_MBEDTLS_TLS_SERVER))
 /*
  * Server side PSK callback
  */
@@ -277,7 +277,7 @@ static int psk_server_callback(void *p_info, mbedtls_ssl_context *ssl,
   mbedtls_ssl_set_hs_psk(ssl, buf, psk_len);
   return 0;
 }
-#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
+#endif /* !ESPIDF_VERSION || (CONFIG_MBEDTLS_SSL_PROTO_DTLS && CONFIG_MBEDTLS_PSK_MODES && CONFIG_MBEDTLS_TLS_SERVER) */
 
 static char*
 get_san_or_cn_from_cert(mbedtls_x509_crt *crt)
@@ -691,6 +691,7 @@ setup_pki_credentials(mbedtls_x509_crt *cacert,
   return 0;
 }
 
+#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_TLS_SERVER)
 /*
  * PKI SNI callback.
  */
@@ -721,6 +722,11 @@ pki_sni_callback(void *p_info, mbedtls_ssl_context *ssl,
     coap_dtls_key_t *new_entry;
 
     name = mbedtls_malloc(name_len+1);
+    if (name == NULL) {
+      ret = -1;
+      goto end;
+    }
+
     memcpy(name, uname, name_len);
     name[name_len] = '\000';
     new_entry =
@@ -735,6 +741,12 @@ pki_sni_callback(void *p_info, mbedtls_ssl_context *ssl,
     m_context->pki_sni_entry_list =
              mbedtls_realloc(m_context->pki_sni_entry_list,
                                    (i+1)*sizeof(pki_sni_entry));
+    if (m_context->pki_sni_entry_list == NULL) {
+      ret = -1;
+      mbedtls_free(name);
+      goto end;
+    }
+
     m_context->pki_sni_entry_list[i].sni = name;
     m_context->pki_sni_entry_list[i].pki_key = *new_entry;
     sni_setup_data = m_context->setup_data;
@@ -763,6 +775,7 @@ end:
   }
   return ret;
 }
+#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_TLS_SERVER */
 
 #ifdef PSK2_PR
 /*
@@ -795,6 +808,11 @@ psk_sni_callback(void *p_info, mbedtls_ssl_context *ssl,
     const coap_dtls_spsk_info_t *new_entry;
 
     name = mbedtls_malloc(name_len+1);
+    if (name == NULL) {
+      ret = -1;
+      goto end;
+    }
+
     memcpy(name, uname, name_len);
     name[name_len] = '\000';
 
@@ -813,6 +831,12 @@ psk_sni_callback(void *p_info, mbedtls_ssl_context *ssl,
     m_context->psk_sni_entry_list =
              mbedtls_realloc(m_context->psk_sni_entry_list,
                                    (i+1)*sizeof(psk_sni_entry));
+
+    if (m_context->psk_sni_entry_list == NULL) {
+      ret = -1;
+      mbedtls_free(name);
+      goto end;
+    }
 
     m_context->psk_sni_entry_list[i].sni.s = name;
     m_context->psk_sni_entry_list[i].sni.length = name_len;
@@ -835,6 +859,8 @@ end:
   return ret;
 }
 #endif /* PSK2_PR */
+
+#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_TLS_SERVER)
 
 static int setup_server_ssl_session(coap_session_t *c_session,
                                     coap_mbedtls_env_t *m_env)
@@ -897,12 +923,14 @@ static int setup_server_ssl_session(coap_session_t *c_session,
   mbedtls_ssl_conf_dtls_cookies(&m_env->conf, mbedtls_ssl_cookie_write,
                                 mbedtls_ssl_cookie_check,
                                 &m_env->cookie_ctx );
-    mbedtls_ssl_set_mtu(&m_env->ssl, c_session->mtu);
+  mbedtls_ssl_set_mtu(&m_env->ssl, c_session->mtu);
 #endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
 fail:
   return ret;
 }
+#endif /* !defined(ESPIDF_VERSION) || CONFIG_MBEDTLS_TLS_SERVER) */
 
+#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_PSK_MODES)
 #define MAX_CIPHERS 100
 static int psk_ciphers[MAX_CIPHERS];
 static int pki_ciphers[MAX_CIPHERS];
@@ -959,6 +987,7 @@ set_ciphersuites(mbedtls_ssl_config *conf, int is_psk)
   }
   mbedtls_ssl_conf_ciphersuites(conf, is_psk ? psk_ciphers : pki_ciphers);
 }
+#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_PSK_MODES */
 
 static int setup_client_ssl_session(coap_session_t *c_session,
                                     coap_mbedtls_env_t *m_env)
@@ -1043,6 +1072,7 @@ static int setup_client_ssl_session(coap_session_t *c_session,
       coap_log(LOG_ERR, "PKI setup failed\n");
       return ret;
     }
+#if !defined(ESPIDF_VERSION) ||(defined(CONFIG_MBEDTLS_TLS_SERVER) && defined(CONFIG_MBEDTLS_SSL_ALPN))
     if (c_session->proto == COAP_PROTO_TLS) {
       const char *alpn_list[2];
 
@@ -1053,13 +1083,16 @@ static int setup_client_ssl_session(coap_session_t *c_session,
         coap_log(LOG_ERR, "ALPN setup failed %d)\n", ret);
       }
     }
+#endif /* !ESPIDF_VERSION || (CONFIG_MBEDTLS_TLS_SERVER && CONFIG_MBEDTLS_SSL_ALPN) */
     if (m_context->setup_data.client_sni) {
       mbedtls_ssl_set_hostname(&m_env->ssl, m_context->setup_data.client_sni);
     }
 #if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS)
     mbedtls_ssl_set_mtu(&m_env->ssl, c_session->mtu);
 #endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
+#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_PSK_MODES)
     set_ciphersuites(&m_env->conf, 0);
+#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_PSK_MODES */
   }
   return 0;
 
@@ -1189,10 +1222,12 @@ static coap_mbedtls_env_t *coap_dtls_new_mbedtls_env(coap_session_t *c_session,
     if (setup_client_ssl_session(c_session, m_env) != 0) {
       goto fail;
     }
+#if !defined(ESPIDF_VERSION) || defined(CONFIG_MBEDTLS_TLS_SERVER)
   } else if (role == COAP_DTLS_ROLE_SERVER) {
     if (setup_server_ssl_session(c_session, m_env) != 0) {
       goto fail;
     }
+#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_TLS_SERVER */
   } else {
     goto fail;
   }
@@ -1251,6 +1286,19 @@ int coap_dtls_context_set_psk(struct coap_context_t *c_context,
 {
   coap_mbedtls_context_t *m_context =
               ((coap_mbedtls_context_t *)c_context->dtls_context);
+#if defined(ESPIDF_VERSION) && (!defined(CONFIG_MBEDTLS_PSK_MODES) || !defined(CONFIG_MBEDTLS_KEY_EXCHANGE_PSK))
+  coap_log(LOG_EMERG, "coap_dtls_context_set_psk:"
+           " libcoap not compiled with MBEDTLS_PSK_MODES and MBEDTLS_KEY_EXCHANGE_PSK"
+           " - update mbedTLS to include psk mode configs\n");
+  return 0;
+#endif /* ESPIDF_VERSION && (!CONFIG_MBEDTLS_PSK_MODES || !CONFIG_MBEDTLS_KEY_EXCHANGE_PSK) */
+
+#if defined(ESPIDF_VERSION) && !defined(CONFIG_MBEDTLS_TLS_SERVER)
+  coap_log(LOG_EMERG, "coap_dtls_context_set_psk:"
+           " libcoap not compiled for Server Mode for MbedTLS"
+           " - update MbedTLS to include Server Mode\n");
+  return 0;
+#endif /* ESPIDF_VERSION && !CONFIG_MBEDTLS_TLS_SERVER */
   m_context->psk_pki_enabled |= IS_PSK;
   return 1;
 }
@@ -1266,6 +1314,12 @@ coap_dtls_context_set_spsk(coap_context_t *c_context,
   coap_mbedtls_context_t *m_context =
                          ((coap_mbedtls_context_t *)c_context->dtls_context);
 
+#if defined(ESPIDF_VERSION) && !defined(CONFIG_MBEDTLS_TLS_SERVER)
+  coap_log(LOG_EMERG, "coap_dtls_context_set_spsk:"
+           " libcoap not compiled for Server Mode for MbedTLS"
+           " - update MbedTLS to include Server Mode\n");
+  return 0;
+#endif /* ESPIDF_VERSION && !CONFIG_MBEDTLS_TLS_SERVER */
   if (!m_context || !setup_data)
     return 0;
 
@@ -1301,6 +1355,13 @@ int coap_dtls_context_set_pki(struct coap_context_t *c_context,
                           coap_dtls_pki_t *setup_data,
                           coap_dtls_role_t role UNUSED)
 {
+#if defined(ESPIDF_VERSION) && (!defined(CONFIG_MBEDTLS_PSK_MODES) || !defined(CONFIG_MBEDTLS_KEY_EXCHANGE_PSK))
+  coap_log(LOG_EMERG, "coap_dtls_context_set_pki:"
+           " libcoap not compiled with MBEDTLS_PSK_MODES and MBEDTLS_KEY_EXCHANGE_PSK"
+           " - update mbedTLS to include psk mode configs\n");
+  return 0;
+#endif /* ESPIDF_VERSION && (!CONFIG_MBEDTLS_PSK_MODES || !CONFIG_MBEDTLS_KEY_EXCHANGE_PSK) */
+
   coap_mbedtls_context_t *m_context =
              ((coap_mbedtls_context_t *)c_context->dtls_context);
 
@@ -1315,6 +1376,7 @@ int coap_dtls_context_set_pki_root_cas(struct coap_context_t *c_context,
 {
   coap_mbedtls_context_t *m_context =
              ((coap_mbedtls_context_t *)c_context->dtls_context);
+
   if (!m_context) {
     coap_log(LOG_WARNING,
              "coap_context_set_pki_root_cas: (D)TLS environment "
@@ -1383,6 +1445,13 @@ void coap_dtls_free_context(void *dtls_context)
 
 void *coap_dtls_new_client_session(coap_session_t *c_session)
 {
+#if defined(ESPIDF_VERSION) && !defined(CONFIG_MBEDTLS_TLS_CLIENT)
+  (void)c_session;
+  coap_log(LOG_EMERG, "coap_dtls_new_client_session:"
+           " libcoap not compiled for Client Mode for MbedTLS"
+           " - update MbedTLS to include Client Mode\n");
+  return NULL;
+#else /* !ESPIDF_VERSION || CONFIG_MBEDTLS_TLS_CLIENT */
   coap_mbedtls_env_t *m_env = coap_dtls_new_mbedtls_env(c_session,
                                                        COAP_DTLS_ROLE_CLIENT);
   int ret;
@@ -1395,6 +1464,7 @@ void *coap_dtls_new_client_session(coap_session_t *c_session)
     }
   }
   return m_env;
+#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_TLS_CLIENT */
 }
 
 void *coap_dtls_new_server_session(coap_session_t *c_session)
@@ -1628,12 +1698,15 @@ int coap_dtls_hello(coap_session_t *c_session,
                     const uint8_t *data,
                     size_t data_len)
 {
-#if defined(ESPIDF_VERSION) && !defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS)
+#if defined(ESPIDF_VERSION) && (!defined(CONFIG_MBEDTLS_SSL_PROTO_DTLS) || !defined(CONFIG_MBEDTLS_TLS_SERVER))
   (void)c_session;
   (void)data;
   (void)data_len;
+  coap_log(LOG_EMERG, "coap_dtls_hello:"
+           " libcoap not compiled for DTLS or Server Mode for MbedTLS"
+           " - update MbedTLS to include DTLS and Server Mode\n");
   return -1;
-#else /* !ESPIDF_VERSION) || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
+#else /* !ESPIDF_VERSION) || (CONFIG_MBEDTLS_SSL_PROTO_DTLS && CONFIG_MBEDTLS_TLS_SERVER) */
   coap_mbedtls_env_t *m_env = (coap_mbedtls_env_t *)c_session->tls;
   coap_ssl_t *ssl_data = m_env ? &m_env->coap_ssl_data : NULL;
   int ret;
@@ -1697,7 +1770,7 @@ int coap_dtls_hello(coap_session_t *c_session,
      return 1;
   }
   return 0;
-#endif /* !ESPIDF_VERSION || CONFIG_MBEDTLS_SSL_PROTO_DTLS */
+#endif /* !ESPIDF_VERSION) || (CONFIG_MBEDTLS_SSL_PROTO_DTLS && CONFIG_MBEDTLS_TLS_SERVER) */
 }
 
 unsigned int coap_dtls_get_overhead(coap_session_t *c_session UNUSED)

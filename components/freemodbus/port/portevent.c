@@ -27,7 +27,7 @@
  *   documentation and/or other materials provided with the distribution.
  * 3. The name of the author may not be used to endorse or promote products
  *   derived from this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
  * IF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -56,7 +56,7 @@
 /* ----------------------- Variables ----------------------------------------*/
 static xQueueHandle xQueueHdl;
 
-#define MB_EVENT_QUEUE_SIZE     (1)
+#define MB_EVENT_QUEUE_SIZE     (6)
 #define MB_EVENT_QUEUE_TIMEOUT  (pdMS_TO_TICKS(CONFIG_FMB_EVENT_QUEUE_TIMEOUT))
 
 /* ----------------------- Start implementation -----------------------------*/
@@ -82,21 +82,30 @@ vMBPortEventClose( void )
     }
 }
 
-BOOL
+BOOL MB_PORT_ISR_ATTR
 xMBPortEventPost( eMBEventType eEvent )
 {
-    BOOL bStatus = TRUE;
+    BaseType_t xStatus, xHigherPriorityTaskWoken = pdFALSE;
     assert(xQueueHdl != NULL);
-    
+
     if( (BOOL)xPortInIsrContext() == TRUE )
     {
-        xQueueSendFromISR(xQueueHdl, (const void*)&eEvent, pdFALSE);
+        xStatus = xQueueSendFromISR(xQueueHdl, (const void*)&eEvent, &xHigherPriorityTaskWoken);
+        if ( xHigherPriorityTaskWoken )
+        {
+            portYIELD_FROM_ISR();
+        }
+        if (xStatus != pdTRUE) {
+            ESP_EARLY_LOGV(MB_PORT_TAG, "%s: Post message failure = %d.", __func__, xStatus);
+            return FALSE;
+        }
     }
     else
     {
-        xQueueSend(xQueueHdl, (const void*)&eEvent, MB_EVENT_QUEUE_TIMEOUT);
+        xStatus = xQueueSend(xQueueHdl, (const void*)&eEvent, MB_EVENT_QUEUE_TIMEOUT);
+        MB_PORT_CHECK((xStatus == pdTRUE), FALSE, "%s: Post message failure.", __func__);
     }
-    return bStatus;
+    return TRUE;
 }
 
 BOOL
@@ -114,10 +123,9 @@ xMBPortEventGet(eMBEventType * peEvent)
 xQueueHandle
 xMBPortEventGetHandle(void)
 {
-    if(xQueueHdl != NULL) //
+    if(xQueueHdl != NULL)
     {
         return xQueueHdl;
     }
     return NULL;
 }
-

@@ -21,14 +21,14 @@ nc 192.168.0.167 3333
 ```
 
 ### Python scripts
-Script tcpclient.py contains configuration for port number, IP version (IPv4 or IPv6) and IP address that has to be altered to match the values used by the application. Example:
+Script example_test.py could be used as a counter part to the tcp-server application,
+IP address and the message to be send to the server shall be stated as arguments. Example:
 
 ```
-PORT = 3333;
-IP_VERSION = 'IPv4'
-IPV4 = '192.168.0.167'
-IPV6 = 'FE80::32AE:A4FF:FE80:5288'
+python example_test.py 192.168.0.167 Message
 ```
+Note that this script is used in automated tests, as well, so the IDF test framework packages need to be imported;
+please add `$IDF_PATH/tools/ci/python_packages` to `PYTHONPATH`.
 
 ## Hardware Required
 
@@ -40,15 +40,17 @@ This example can be run on any commonly available ESP32 development board.
 idf.py menuconfig
 ```
 
-Set following parameter under Serial Flasher Options:
-
-* Set `Default serial port`.
-
 Set following parameters under Example Configuration Options:
 
 * Set `IP version` of the example to be IPV4 or IPV6.
 
 * Set `Port` number of the socket, that server example will create.
+
+* Set `TCP keep-alive idle time(s)` value of TCP keep alive idle time. This time is the time between the last data transmission.
+
+* Set `TCP keep-alive interval time(s)` value of TCP keep alive interval time. This time is the interval time of keepalive probe packets.
+
+* Set `TCP keep-alive packet retry send counts` value of TCP keep alive packet retry send counts. This is the number of retries of the keepalive probe packet.
 
 Configure Wi-Fi or Ethernet under "Example Connection Configuration" menu. See "Establishing Wi-Fi or Ethernet Connection" section in [examples/protocols/README.md](../../README.md) for more details.
 

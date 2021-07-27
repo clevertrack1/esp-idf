@@ -2,7 +2,6 @@
 #include "esp_partition.h"
 #include "unity.h"
 
-
 TEST_CASE("Basic handling of a partition in external flash", "[partition]")
 {
     esp_flash_t flash = {

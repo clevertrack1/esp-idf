@@ -616,9 +616,11 @@ static void bta_gattc_explore_srvc(UINT16 conn_id, tBTA_GATTC_SERV *p_srvc_cb)
 
     //server discover end, update connection parameters
 #if BLE_INCLUDED == TRUE
+    #if (BT_MULTI_CONNECTION_ENBALE == FALSE)
     if (p_clcb->transport == BTA_TRANSPORT_LE) {
         L2CA_EnableUpdateBleConnParams(p_clcb->p_srcb->server_bda, TRUE);
     }
+    #endif
     //discover service complete, trigger callback
     tBTA_GATTC cb_data;
     cb_data.dis_cmpl.status  = p_clcb->status;
@@ -1233,7 +1235,7 @@ tBTA_GATTC_DESCRIPTOR*  bta_gattc_get_descriptor(UINT16 conn_id, UINT16 handle)
 
 void bta_gattc_get_service_with_uuid(UINT16 conn_id, tBT_UUID *svc_uuid,
                                      btgatt_db_element_t **svc_db,
-                                     int *count)
+                                     UINT16 *count)
 {
     const list_t* svc = bta_gattc_get_services(conn_id);
     if(!svc) {
@@ -1307,7 +1309,7 @@ void bta_gattc_get_db_with_opration(UINT16 conn_id,
                                                       tBT_UUID *descr_uuid,
                                                       UINT16 start_handle, UINT16 end_handle,
                                                       btgatt_db_element_t **char_db,
-                                                      int *count)
+                                                      UINT16 *count)
 {
     tBTA_GATTC_CLCB *p_clcb = bta_gattc_find_clcb_by_conn_id(conn_id);
 
@@ -1672,7 +1674,7 @@ static size_t bta_gattc_get_db_size(list_t *services,
     return db_size;
 }
 
-void bta_gattc_get_db_size_handle(UINT16 conn_id, UINT16 start_handle, UINT16 end_handle, int *count)
+void bta_gattc_get_db_size_handle(UINT16 conn_id, UINT16 start_handle, UINT16 end_handle, UINT16 *count)
 {
     tBTA_GATTC_CLCB *p_clcb = bta_gattc_find_clcb_by_conn_id(conn_id);
 
@@ -1691,7 +1693,7 @@ void bta_gattc_get_db_size_handle(UINT16 conn_id, UINT16 start_handle, UINT16 en
 }
 
 void bta_gattc_get_db_size_with_type_handle(UINT16 conn_id, bt_gatt_db_attribute_type_t type,
-                                            UINT16 start_handle, UINT16 end_handle, UINT16 char_handle, int *count)
+                                            UINT16 start_handle, UINT16 end_handle, UINT16 char_handle, UINT16 *count)
 {
     tBTA_GATTC_CLCB *p_clcb = bta_gattc_find_clcb_by_conn_id(conn_id);
 
@@ -1738,7 +1740,7 @@ void bta_gattc_get_db_size_with_type_handle(UINT16 conn_id, bt_gatt_db_attribute
 static void bta_gattc_get_gatt_db_impl(tBTA_GATTC_SERV *p_srvc_cb,
                                        UINT16 start_handle, UINT16 end_handle,
                                        btgatt_db_element_t **db,
-                                       int *count)
+                                       UINT16 *count)
 {
     APPL_TRACE_DEBUG("%s: start_handle 0x%04x, end_handle 0x%04x",
                      __func__, start_handle, end_handle);
@@ -1886,7 +1888,7 @@ static void bta_gattc_get_gatt_db_impl(tBTA_GATTC_SERV *p_srvc_cb,
 ** Returns          None.
 **
 *******************************************************************************/
-void bta_gattc_get_gatt_db(UINT16 conn_id, UINT16 start_handle, UINT16 end_handle, btgatt_db_element_t **db, int *count)
+void bta_gattc_get_gatt_db(UINT16 conn_id, UINT16 start_handle, UINT16 end_handle, btgatt_db_element_t **db, UINT16 *count)
 {
     tBTA_GATTC_CLCB *p_clcb = bta_gattc_find_clcb_by_conn_id(conn_id);
 
@@ -2194,4 +2196,3 @@ void bta_gattc_cache_reset(BD_ADDR server_bda)
 
 //#endif /* GATTC_CACHE_NVS */
 #endif /* BTA_GATT_INCLUDED */
-

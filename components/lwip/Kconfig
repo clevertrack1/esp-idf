@@ -4,7 +4,25 @@ menu "LWIP"
         string "Local netif hostname"
         default 'espressif'
         help
-            The name this device will report to other devices on the network
+            The default name this device will report to other devices on the network.
+            Could be updated at runtime with esp_netif_set_hostname()
+
+    config LWIP_NETIF_API
+        bool "Enable usage of standard POSIX APIs in LWIP"
+        default n
+        help
+            If this feature is enabled, standard POSIX APIs: if_indextoname(), if_nametoindex()
+            could be used to convert network interface index to name
+            instead of IDF specific esp-netif APIs (such as esp_netif_get_netif_impl_name())
+
+
+    config LWIP_DNS_SUPPORT_MDNS_QUERIES
+        bool "Enable mDNS queries in resolving host name"
+        default y
+        help
+            If this feature is enabled, standard API such as gethostbyname
+            support .local addresses by sending one shot multicast mDNS
+            query
 
     config LWIP_L2_TO_L3_COPY
         bool "Enable copy between Layer2 and Layer3 packets"
@@ -54,14 +72,31 @@ menu "LWIP"
             to 16.
 
     config LWIP_USE_ONLY_LWIP_SELECT
-        bool "Support LWIP socket select() only"
+        bool "Support LWIP socket select() only (DEPRECATED)"
         default n
         help
+            This option is deprecated. Use VFS_SUPPORT_SELECT instead, which is
+            the inverse of this option.
+
             The virtual filesystem layer of select() redirects sockets to
             lwip_select() and non-socket file descriptors to their respective driver
             implementations. If this option is enabled then all calls of select()
             will be redirected to lwip_select(), therefore, select can be used
             for sockets only.
+
+    config LWIP_SO_LINGER
+        bool "Enable SO_LINGER processing"
+        default n
+        help
+            Enabling this option allows SO_LINGER processing.
+            l_onoff = 1,l_linger can set the timeout.
+
+            If l_linger=0, When a connection is closed, TCP will terminate the connection.
+            This means that TCP will discard any data packets stored in the socket send buffer
+            and send an RST to the peer.
+
+            If l_linger!=0,Then closesocket() calls to block the process until
+            the remaining data packets has been sent or timed out.
 
     config LWIP_SO_REUSE
         bool "Enable SO_REUSEADDR option"
@@ -90,18 +125,54 @@ menu "LWIP"
         help
             Enabling this option allows checking for available data on a netconn.
 
-    config LWIP_IP_FRAG
-        bool "Enable fragment outgoing IP packets"
+    config LWIP_NETBUF_RECVINFO
+        bool "Enable IP_PKTINFO option"
         default n
         help
-            Enabling this option allows fragmenting outgoing IP packets if their size
+            Enabling this option allows checking for the destination address
+            of a received IPv4 Packet.
+
+    config LWIP_IP4_FRAG
+        bool "Enable fragment outgoing IP4 packets"
+        default y
+        help
+            Enabling this option allows fragmenting outgoing IP4 packets if their size
             exceeds MTU.
 
-    config LWIP_IP_REASSEMBLY
-        bool "Enable reassembly incoming fragmented IP packets"
+    config LWIP_IP6_FRAG
+        bool "Enable fragment outgoing IP6 packets"
+        default y
+        depends on LWIP_IPV6
+        help
+            Enabling this option allows fragmenting outgoing IP6 packets if their size
+            exceeds MTU.
+
+    config LWIP_IP4_REASSEMBLY
+        bool "Enable reassembly incoming fragmented IP4 packets"
         default n
         help
-            Enabling this option allows reassemblying incoming fragmented IP packets.
+            Enabling this option allows reassemblying incoming fragmented IP4 packets.
+
+    config LWIP_IP6_REASSEMBLY
+        bool "Enable reassembly incoming fragmented IP6 packets"
+        default n
+        depends on LWIP_IPV6
+        help
+            Enabling this option allows reassemblying incoming fragmented IP6 packets.
+
+    config LWIP_IP_FORWARD
+        bool "Enable IP forwarding"
+        default n
+        help
+            Enabling this option allows packets forwarding across multiple interfaces.
+
+    config LWIP_IPV4_NAPT
+        bool "Enable NAT (new/experimental)"
+        depends on LWIP_IP_FORWARD
+        select LWIP_L2_TO_L3_COPY
+        default n
+        help
+            Enabling this option allows Network Address and Port Translation.
 
     config LWIP_STATS
         bool "Enable LWIP statistics"
@@ -168,6 +239,15 @@ menu "LWIP"
             Enabling this option performs a check (via ARP request) if the offered IP address
             is not already in use by another host on the network.
 
+    config LWIP_DHCP_DISABLE_CLIENT_ID
+        bool "DHCP: Disable Use of HW address as client identification"
+        default n
+        help
+            This option could be used to disable DHCP client identification with its MAC address.
+            (Client id is used by DHCP servers to uniquely identify clients and are included
+            in the DHCP packets as an option 61)
+            Set this option to "y" in order to exclude option 61 from DHCP packets.
+
     config LWIP_DHCP_RESTORE_LAST_IP
         bool "DHCP: Restore last IP obtained from DHCP server"
         default n
@@ -178,10 +258,18 @@ menu "LWIP"
 
     menu "DHCP server"
 
+        config LWIP_DHCPS
+            bool "DHCPS: Enable IPv4 Dynamic Host Configuration Protocol Server (DHCPS)"
+            default y
+            help
+                Enabling this option allows the device to run the DHCP server
+                (to dynamically assign IPv4 addresses to clients).
+
         config LWIP_DHCPS_LEASE_UNIT
             int "Multiplier for lease time, in seconds"
             range 1 3600
             default 60
+            depends on LWIP_DHCPS
             help
                 The DHCP server is calculating lease time multiplying the sent
                 and received times by this number of seconds per unit.
@@ -191,6 +279,7 @@ menu "LWIP"
             int "Maximum number of stations"
             range 1 64
             default 8
+            depends on LWIP_DHCPS
             help
                 The maximum number of DHCP clients that are connected to the server.
                 After this number is exceeded, DHCP server removes of the oldest device
@@ -239,6 +328,55 @@ menu "LWIP"
             If rate limiting self-assignment requests, wait this long between
             each request.
 
+    config LWIP_IPV6
+        bool "Enable IPv6"
+        default y
+        help
+            Enable IPv6 function. If not use IPv6 function, set this option to n.
+            If disabling LWIP_IPV6 then some other components (coap and asio) will
+            no longer be available.
+
+    config LWIP_IPV6_AUTOCONFIG
+        bool "Enable IPV6 stateless address autoconfiguration (SLAAC)"
+        depends on LWIP_IPV6
+        default n
+        help
+            Enabling this option allows the devices to IPV6 stateless address autoconfiguration (SLAAC).
+
+            See RFC 4862.
+
+    config LWIP_IPV6_NUM_ADDRESSES
+        int "Number of IPv6 addresses on each network interface"
+        depends on LWIP_IPV6
+        default 3
+        help
+            The maximum number of IPv6 addresses on each interface. Any additional
+            addresses will be discarded.
+
+    config LWIP_IPV6_FORWARD
+        bool "Enable IPv6 forwarding between interfaces"
+        depends on LWIP_IPV6
+        default n
+        help
+            Forwarding IPv6 packets between interfaces is only required when acting as
+            a router.
+
+    config LWIP_IPV6_RDNSS_MAX_DNS_SERVERS
+        int "Use IPv6 Router Advertisement Recursive DNS Server Option"
+        depends on LWIP_IPV6
+        default 0
+        help
+            Use IPv6 Router Advertisement Recursive DNS Server Option (as per RFC 6106) to
+            copy a defined maximum number of DNS servers to the DNS module.
+            Set this option to a number of desired DNS servers advertised in the RA protocol.
+            This feature is disabled when set to 0.
+
+    config LWIP_NETIF_STATUS_CALLBACK
+        bool "Enable status callback for network interfaces"
+        default n
+        help
+            Enable callbacks when the network interface is up/down and addresses are changed.
+
     menuconfig LWIP_NETIF_LOOPBACK
         bool "Support per-interface loopback"
         default y
@@ -285,6 +423,13 @@ menu "LWIP"
                 change the memory usage of LWIP, except for preventing
                 new listening TCP connections after the limit is reached.
 
+        config LWIP_TCP_HIGH_SPEED_RETRANSMISSION
+            bool "TCP high speed retransmissions"
+            default y
+            help
+                Speed up the TCP retransmission interval. If disabled,
+                it is recommended to change the number of SYN retransmissions to 6,
+                and TCP initial rto time to 3000.
 
         config LWIP_TCP_MAXRTX
             int "Maximum number of retransmissions of data segments"
@@ -295,7 +440,8 @@ menu "LWIP"
 
         config LWIP_TCP_SYNMAXRTX
             int "Maximum number of retransmissions of SYN segments"
-            default 6
+            default 6 if !LWIP_TCP_HIGH_SPEED_RETRANSMISSION
+            default 12 if LWIP_TCP_HIGH_SPEED_RETRANSMISSION
             range 3 12
             help
                 Set maximum number of retransmissions of SYN segments.
@@ -311,6 +457,15 @@ menu "LWIP"
                 IPv4 TCP_MSS Range: 576 <= TCP_MSS <= 1460
                 IPv6 TCP_MSS Range: 1220<= TCP_mSS <= 1440
 
+        config LWIP_TCP_TMR_INTERVAL
+            int "TCP timer interval(ms)"
+            default 250
+            help
+                Set TCP timer interval in milliseconds.
+
+                Can be used to speed connections on bad networks.
+                A lower value will redeliver unacked packets faster.
+
         config LWIP_TCP_MSL
             int "Maximum segment lifetime (MSL)"
             default 60000
@@ -320,7 +475,8 @@ menu "LWIP"
         config LWIP_TCP_SND_BUF_DEFAULT
             int "Default send buffer size"
             default 5744  # 4 * default MSS
-            range 2440 65535
+            range 2440 65535 if !LWIP_WND_SCALE
+            range 2440 1024000 if LWIP_WND_SCALE
             help
                 Set default send buffer size for new TCP sockets.
 
@@ -336,7 +492,8 @@ menu "LWIP"
         config LWIP_TCP_WND_DEFAULT
             int "Default receive window size"
             default 5744 # 4 * default MSS
-            range 2440 65535
+            range 2440 65535 if !LWIP_WND_SCALE
+            range 2440 1024000 if LWIP_WND_SCALE
             help
                 Set default TCP receive window size for new TCP sockets.
 
@@ -375,6 +532,12 @@ menu "LWIP"
 
                 Disable this option to save some RAM during TCP sessions, at the expense
                 of increased retransmissions if segments arrive out of order.
+
+        config LWIP_TCP_SACK_OUT
+            bool "Support sending selective acknowledgements"
+            default n
+            help
+                TCP will support sending selective acknowledgements (SACKs).
 
         config LWIP_TCP_KEEP_CONNECTION_WHEN_IP_CHANGES
             bool "Keep TCP connections when IP changed"
@@ -425,6 +588,14 @@ menu "LWIP"
             help
                 Enable this feature to support TCP window scaling.
 
+        config LWIP_TCP_RTO_TIME
+            int "Default TCP rto time"
+            default 3000 if !LWIP_TCP_HIGH_SPEED_RETRANSMISSION
+            default 1500 if LWIP_TCP_HIGH_SPEED_RETRANSMISSION
+            help
+                Set default TCP rto time for a reasonable initial rto.
+                In bad network environment, recommend set value of rto time to 1500.
+
     endmenu # TCP
 
     menu "UDP"
@@ -457,6 +628,28 @@ menu "LWIP"
                 receive mail box is big enough to avoid packet drop between LWIP core and application.
 
     endmenu # UDP
+
+    menu "Checksums"
+
+        config LWIP_CHECKSUM_CHECK_IP
+            bool "Enable LWIP IP checksums"
+            default n
+            help
+                Enable checksum checking for received IP messages
+
+        config LWIP_CHECKSUM_CHECK_UDP
+            bool "Enable LWIP UDP checksums"
+            default n
+            help
+                Enable checksum checking for received UDP messages
+
+        config LWIP_CHECKSUM_CHECK_ICMP
+            bool "Enable LWIP ICMP checksums"
+            default y
+            help
+                Enable checksum checking for received ICMP messages
+
+    endmenu # Checksums
 
     config LWIP_TCPIP_TASK_STACK_SIZE
         int "TCP/IP Task Stack Size"
@@ -502,6 +695,33 @@ menu "LWIP"
 
             PPP over serial support is experimental and unsupported.
 
+    config LWIP_PPP_ENABLE_IPV6
+        bool "Enable IPV6 support for PPP connections (IPV6CP)"
+        depends on LWIP_PPP_SUPPORT && LWIP_IPV6
+        default y
+        help
+            Enable IPV6 support in PPP for the local link between the DTE (processor) and DCE (modem).
+            There are some modems which do not support the IPV6 addressing in the local link.
+            If they are requested for IPV6CP negotiation, they may time out.
+            This would in turn fail the configuration for the whole link.
+            If your modem is not responding correctly to PPP Phase Network, try to disable IPV6 support.
+
+    config LWIP_IPV6_MEMP_NUM_ND6_QUEUE
+        int "Max number of IPv6 packets to queue during MAC resolution"
+        depends on LWIP_IPV6
+        range 3 20
+        default 3
+        help
+            Config max number of IPv6 packets to queue during MAC resolution.
+
+    config LWIP_IPV6_ND6_NUM_NEIGHBORS
+        int "Max number of entries in IPv6 neighbor cache"
+        depends on LWIP_IPV6
+        range 3 10
+        default 5
+        help
+            Config max number of entries in IPv6 neighbor cache
+
     config LWIP_PPP_NOTIFY_PHASE_SUPPORT
         bool "Enable Notify Phase Callback"
         depends on LWIP_PPP_SUPPORT
@@ -537,6 +757,29 @@ menu "LWIP"
         help
             Enable Microsoft Point-to-Point Encryption (MPPE) support
 
+    config LWIP_ENABLE_LCP_ECHO
+        bool "Enable LCP ECHO"
+        depends on LWIP_PPP_SUPPORT
+        default n
+        help
+            Enable LCP echo keepalive requests
+
+    config LWIP_LCP_ECHOINTERVAL
+        int "Echo interval (s)"
+        range 0 1000000
+        depends on LWIP_ENABLE_LCP_ECHO
+        default 3
+        help
+            Interval in seconds between keepalive LCP echo requests, 0 to disable.
+
+    config LWIP_LCP_MAXECHOFAILS
+        int "Maximum echo failures"
+        range 0 100000
+        depends on LWIP_ENABLE_LCP_ECHO
+        default 3
+        help
+            Number of consecutive unanswered echo requests before failure is indicated.
+
     config LWIP_PPP_DEBUG_ON
         bool "Enable PPP debug log output"
         depends on LWIP_PPP_SUPPORT
@@ -544,15 +787,38 @@ menu "LWIP"
         help
             Enable PPP debug log output
 
+    menuconfig LWIP_SLIP_SUPPORT
+        bool "Enable SLIP support (new/experimental)"
+        default n
+        help
+            Enable SLIP stack. Now only SLIP over serial is possible.
+
+            SLIP over serial support is experimental and unsupported.
+
+    config LWIP_SLIP_DEBUG_ON
+        bool "Enable SLIP debug log output"
+        depends on LWIP_SLIP_SUPPORT
+        default n
+        help
+            Enable SLIP debug log output
+
     menu "ICMP"
+
+        config LWIP_ICMP
+            bool "ICMP: Enable ICMP"
+            default y
+            help
+                Enable ICMP module for check network stability
 
         config LWIP_MULTICAST_PING
             bool "Respond to multicast pings"
             default n
+            depends on LWIP_ICMP6 || LWIP_ICMP
 
         config LWIP_BROADCAST_PING
             bool "Respond to broadcast pings"
             default n
+            depends on LWIP_ICMP
 
     endmenu # ICMP
 
@@ -590,5 +856,173 @@ menu "LWIP"
                 (SNTPv4 RFC 4330 enforces a minimum update time of 15 seconds).
 
     endmenu # SNTP
+
+    config LWIP_ESP_LWIP_ASSERT
+        bool "Enable LWIP ASSERT checks"
+        default y
+        depends on !COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE
+        help
+            Enable this option keeps LWIP assertion checks enabled.
+            It is recommended to keep this option enabled.
+
+            If asserts are disabled for the entire project, they are also disabled
+            for LWIP and this option is ignored.
+
+    menu "Hooks"
+
+        choice LWIP_HOOK_TCP_ISN
+            prompt "TCP ISN Hook"
+            default LWIP_HOOK_TCP_ISN_DEFAULT
+            help
+                Enables to define a TCP ISN hook to randomize initial sequence
+                number in TCP connection.
+                The default TCP ISN algorithm used in IDF (standardized in RFC 6528)
+                produces ISN by combining an MD5 of the new TCP id and a stable
+                secret with the current time.
+                This is because the lwIP implementation (`tcp_next_iss`) is not
+                very strong, as it does not take into consideration any platform
+                specific entropy source.
+
+                Set to LWIP_HOOK_TCP_ISN_CUSTOM to provide custom implementation.
+                Set to LWIP_HOOK_TCP_ISN_NONE to use lwIP implementation.
+
+
+            config LWIP_HOOK_TCP_ISN_NONE
+                bool "No hook declared"
+            config LWIP_HOOK_TCP_ISN_DEFAULT
+                bool "Default implementation"
+            config LWIP_HOOK_TCP_ISN_CUSTOM
+                bool "Custom implementation"
+
+        endchoice
+
+        choice LWIP_HOOK_IP6_ROUTE
+            prompt "IPv6 route Hook"
+            depends on LWIP_IPV6
+            default LWIP_HOOK_IP6_ROUTE_NONE
+            help
+                Enables custom IPv6 route hook.
+                Setting this to "default" provides weak implementation
+                stub that could be overwritten in application code.
+                Setting this to "custom" provides hook's declaration
+                only and expects the application to implement it.
+
+            config LWIP_HOOK_IP6_ROUTE_NONE
+                bool "No hook declared"
+            config LWIP_HOOK_IP6_ROUTE_DEFAULT
+                bool "Default (weak) implementation"
+            config LWIP_HOOK_IP6_ROUTE_CUSTOM
+                bool "Custom implementation"
+
+        endchoice
+
+        choice LWIP_HOOK_ND6_GET_GW
+            prompt "IPv6 get gateway Hook"
+            depends on LWIP_IPV6
+            default LWIP_HOOK_ND6_GET_GW_NONE
+            help
+                Enables custom IPv6 route hook.
+                Setting this to "default" provides weak implementation
+                stub that could be overwritten in application code.
+                Setting this to "custom" provides hook's declaration
+                only and expects the application to implement it.
+
+            config LWIP_HOOK_ND6_GET_GW_NONE
+                bool "No hook declared"
+            config LWIP_HOOK_ND6_GET_GW_DEFAULT
+                bool "Default (weak) implementation"
+            config LWIP_HOOK_ND6_GET_GW_CUSTOM
+                bool "Custom implementation"
+
+        endchoice
+
+        choice LWIP_HOOK_NETCONN_EXTERNAL_RESOLVE
+            prompt "Netconn external resolve Hook"
+            default LWIP_HOOK_NETCONN_EXT_RESOLVE_NONE
+            help
+                Enables custom DNS resolve hook.
+                Setting this to "default" provides weak implementation
+                stub that could be overwritten in application code.
+                Setting this to "custom" provides hook's declaration
+                only and expects the application to implement it.
+
+            config LWIP_HOOK_NETCONN_EXT_RESOLVE_NONE
+                bool "No hook declared"
+            config LWIP_HOOK_NETCONN_EXT_RESOLVE_DEFAULT
+                bool "Default (weak) implementation"
+            config LWIP_HOOK_NETCONN_EXT_RESOLVE_CUSTOM
+                bool "Custom implementation"
+
+        endchoice
+
+    endmenu # Hooks
+
+    menuconfig LWIP_DEBUG
+        bool "Enable LWIP Debug"
+        default n
+        help
+            Enabling this option allows different kinds of lwIP debug output.
+
+            All lwIP debug features increase the size of the final binary.
+
+    config LWIP_NETIF_DEBUG
+        bool "Enable netif debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_PBUF_DEBUG
+        bool "Enable pbuf debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_ETHARP_DEBUG
+        bool "Enable etharp debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_API_LIB_DEBUG
+        bool "Enable api lib debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_SOCKETS_DEBUG
+        bool "Enable socket debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_IP_DEBUG
+        bool "Enable IP debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_ICMP_DEBUG
+        bool "Enable ICMP debug messages"
+        depends on LWIP_DEBUG && LWIP_ICMP
+        default n
+
+    config LWIP_DHCP_STATE_DEBUG
+        bool "Enable DHCP state tracking"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_DHCP_DEBUG
+        bool "Enable DHCP debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_IP6_DEBUG
+        bool "Enable IP6 debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_ICMP6_DEBUG
+        bool "Enable ICMP6 debug messages"
+        depends on LWIP_DEBUG
+        default n
+
+    config LWIP_TCP_DEBUG
+        bool "Enable TCP debug messages"
+        depends on LWIP_DEBUG
+        default n
 
 endmenu

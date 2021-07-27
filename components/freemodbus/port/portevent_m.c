@@ -46,14 +46,14 @@
 #include "freertos/semphr.h"
 #include "port_serial_master.h"
 
-#if MB_MASTER_RTU_ENABLED || MB_MASTER_ASCII_ENABLED
+#if MB_MASTER_RTU_ENABLED || MB_MASTER_ASCII_ENABLED || MB_MASTER_TCP_ENABLED
 /* ----------------------- Defines ------------------------------------------*/
 // Event bit mask for xMBMasterPortEventGet()
 #define MB_EVENT_POLL_MASK  (EventBits_t)( EV_MASTER_READY | \
                                             EV_MASTER_FRAME_RECEIVED | \
                                             EV_MASTER_EXECUTE | \
                                             EV_MASTER_FRAME_SENT | \
-                                            EV_MASTER_FRAME_TRANSMITTED | \
+                                            EV_MASTER_FRAME_TRANSMIT | \
                                             EV_MASTER_ERROR_PROCESS )
 
 // Event bit mask for eMBMasterWaitRequestFinish()
@@ -62,11 +62,12 @@
                                             EV_MASTER_ERROR_RECEIVE_DATA | \
                                             EV_MASTER_ERROR_EXECUTE_FUNCTION )
 
-#define MB_CHECK_EVENT(event, mask) (event & mask)
+#define MB_EVENT_RESOURCE   (EventBits_t)( 0x0080 )
 
 /* ----------------------- Variables ----------------------------------------*/
-static SemaphoreHandle_t xSemaphorMasterHdl;
+static EventGroupHandle_t xResourceMasterHdl;
 static EventGroupHandle_t xEventGroupMasterHdl;
+static EventGroupHandle_t xEventGroupMasterConfirmHdl;
 
 /* ----------------------- Start implementation -----------------------------*/
 
@@ -74,12 +75,13 @@ BOOL
 xMBMasterPortEventInit( void )
 {
     xEventGroupMasterHdl = xEventGroupCreate();
-    MB_PORT_CHECK((xEventGroupMasterHdl != NULL),
+    xEventGroupMasterConfirmHdl = xEventGroupCreate();
+    MB_PORT_CHECK((xEventGroupMasterHdl != NULL) && (xEventGroupMasterConfirmHdl != NULL),
                     FALSE, "mb stack event group creation error.");
     return TRUE;
 }
 
-BOOL
+BOOL MB_PORT_ISR_ATTR
 xMBMasterPortEventPost( eMBMasterEventType eEvent )
 {
     BOOL bStatus = FALSE;
@@ -113,24 +115,41 @@ xMBMasterPortEventPost( eMBMasterEventType eEvent )
     return bStatus;
 }
 
+eMBMasterEventType
+xMBMasterPortFsmWaitConfirmation( eMBMasterEventType eEventMask, ULONG ulTimeout)
+{
+    EventBits_t uxBits;
+    uxBits = xEventGroupWaitBits( xEventGroupMasterConfirmHdl,  // The event group being tested.
+                                    eEventMask,                 // The bits within the event group to wait for.
+                                    pdFALSE,                    // Keep masked bits.
+                                    pdFALSE,                    // Don't wait for both bits, either bit will do.
+                                    ulTimeout);                 // Wait timeout for either bit to be set.
+    if (ulTimeout && uxBits) {
+        // Clear confirmation events that where set in the mask
+        xEventGroupClearBits( xEventGroupMasterConfirmHdl, (uxBits & eEventMask) );
+    }
+    return (eMBMasterEventType)(uxBits & eEventMask);
+}
+
 BOOL
-xMBMasterPortEventGet( eMBMasterEventType * eEvent)
+xMBMasterPortEventGet( eMBMasterEventType* eEvent )
 {
     EventBits_t uxBits;
     BOOL    xEventHappened = FALSE;
-    uxBits = xEventGroupWaitBits(
-            xEventGroupMasterHdl,   // The event group being tested.
-            MB_EVENT_POLL_MASK,     // The bits within the event group to wait for.
-            pdTRUE,                 // Masked bits should be cleared before returning.
-            pdFALSE,                // Don't wait for both bits, either bit will do.
-            portMAX_DELAY);        // Wait forever for either bit to be set.
-
+    uxBits = xEventGroupWaitBits( xEventGroupMasterHdl, // The event group being tested.
+                                    MB_EVENT_POLL_MASK, // The bits within the event group to wait for.
+                                    pdTRUE,             // Masked bits should be cleared before returning.
+                                    pdFALSE,            // Don't wait for both bits, either bit will do.
+                                    portMAX_DELAY);     // Wait forever for either bit to be set.
     // Check if poll event is correct
-    if (uxBits & MB_EVENT_POLL_MASK) {
-        *eEvent = (eMBMasterEventType)(uxBits);
+    if (MB_PORT_CHECK_EVENT(uxBits, MB_EVENT_POLL_MASK)) {
+        *eEvent = (eMBMasterEventType)(uxBits & MB_EVENT_POLL_MASK);
+        // Set event bits in confirmation group (for synchronization with port task)
+        xEventGroupSetBits( xEventGroupMasterConfirmHdl, *eEvent );
         xEventHappened = TRUE;
     } else {
-        ESP_LOGE(MB_PORT_TAG,"%s: Incorrect event triggered.", __func__);
+        ESP_LOGE(MB_PORT_TAG,"%s: Incorrect event triggered = %d.", __func__, uxBits);
+        *eEvent = (eMBMasterEventType)uxBits;
         xEventHappened = FALSE;
     }
     return xEventHappened;
@@ -139,11 +158,9 @@ xMBMasterPortEventGet( eMBMasterEventType * eEvent)
 // This function is initialize the OS resource for modbus master.
 void vMBMasterOsResInit( void )
 {
-    xSemaphorMasterHdl = xSemaphoreCreateBinary();
-    if (xSemaphorMasterHdl == NULL)
-    {
-        ESP_LOGE(MB_PORT_TAG,"%s: OS semaphore create error.", __func__);
-    }
+    xResourceMasterHdl = xEventGroupCreate();
+    xEventGroupSetBits(xResourceMasterHdl, MB_EVENT_RESOURCE);
+    MB_PORT_CHECK((xResourceMasterHdl != NULL), ; , "Resource create error.");
 }
 
 /**
@@ -156,28 +173,26 @@ void vMBMasterOsResInit( void )
  */
 BOOL xMBMasterRunResTake( LONG lTimeOut )
 {
-    BOOL xResult = FALSE;
-    BaseType_t xStatus = pdTRUE;
-
-    // If waiting time is -1. It will wait forever
-    xStatus = xSemaphoreTake(xSemaphorMasterHdl, lTimeOut );
-    if (xStatus == pdTRUE) {
-        xResult = TRUE;
-    }
-    return xResult;
+    EventBits_t uxBits;
+    uxBits = xEventGroupWaitBits( xResourceMasterHdl,   // The event group being tested.
+                                    MB_EVENT_RESOURCE,  // The bits within the event group to wait for.
+                                    pdTRUE,             // Masked bits should be cleared before returning.
+                                    pdFALSE,            // Don't wait for both bits, either bit will do.
+                                    lTimeOut);          // Resource wait timeout.
+    MB_PORT_CHECK((uxBits == MB_EVENT_RESOURCE), FALSE , "Take resource failure.");
+    ESP_LOGD(MB_PORT_TAG,"%s:Take resource (%x) (%lu ticks).", __func__, uxBits,  lTimeOut);
+    return TRUE;
 }
 
 /**
- * This function is release Mobus Master running resource.
+ * This function is release Modbus Master running resource.
  * Note:The resource is define by Operating System.If you not use OS this function can be empty.
  */
 void vMBMasterRunResRelease( void )
 {
-    BaseType_t xStatus = pdTRUE;
-    xStatus = xSemaphoreGive(xSemaphorMasterHdl);
-    if (xStatus != pdTRUE) {
-        ESP_LOGE(MB_PORT_TAG,"%s: resource release failure.", __func__);
-    }
+    EventBits_t uxBits = xEventGroupSetBits( xResourceMasterHdl, MB_EVENT_RESOURCE );
+    MB_PORT_CHECK((uxBits == MB_EVENT_RESOURCE), ; , "Resource release failure.");
+    ESP_LOGD(MB_PORT_TAG,"%s: Release resource (%x).", __func__, uxBits);
 }
 
 /**
@@ -189,12 +204,10 @@ void vMBMasterRunResRelease( void )
  * @param ucPDULength PDU buffer length
  *
  */
-void vMBMasterErrorCBRespondTimeout(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength) 
+void vMBMasterErrorCBRespondTimeout(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength)
 {
     BOOL ret = xMBMasterPortEventPost(EV_MASTER_ERROR_RESPOND_TIMEOUT);
-    if(ret != TRUE) {
-        ESP_LOGE(MB_PORT_TAG, "Post event 'EV_MASTER_ERROR_RESPOND_TIMEOUT' failed!!!");
-    }
+    MB_PORT_CHECK((ret == TRUE), ; , "%s: Post event 'EV_MASTER_ERROR_RESPOND_TIMEOUT' failed!", __func__);
     ESP_LOGD(MB_PORT_TAG,"%s:Callback respond timeout.", __func__);
 }
 
@@ -206,13 +219,12 @@ void vMBMasterErrorCBRespondTimeout(UCHAR ucDestAddress, const UCHAR* pucPDUData
  * @param pucPDUData PDU buffer data
  * @param ucPDULength PDU buffer length
  */
-void vMBMasterErrorCBReceiveData(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength) 
+void vMBMasterErrorCBReceiveData(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength)
 {
     BOOL ret = xMBMasterPortEventPost(EV_MASTER_ERROR_RECEIVE_DATA);
-    if(ret != TRUE) {
-        ESP_LOGE(MB_PORT_TAG,"xMBMasterPortEventPost event 'EV_MASTER_ERROR_RECEIVE_DATA' failed!!!");
-    }
+    MB_PORT_CHECK((ret == TRUE), ; , "%s: Post event 'EV_MASTER_ERROR_RECEIVE_DATA' failed!", __func__);
     ESP_LOGD(MB_PORT_TAG,"%s:Callback receive data timeout failure.", __func__);
+    ESP_LOG_BUFFER_HEX_LEVEL("Err rcv buf", (void*)pucPDUData, (uint16_t)ucPDULength, ESP_LOG_DEBUG);
 }
 
 /**
@@ -225,12 +237,12 @@ void vMBMasterErrorCBReceiveData(UCHAR ucDestAddress, const UCHAR* pucPDUData, U
  * @param ucPDULength PDU buffer length
  *
  */
-void vMBMasterErrorCBExecuteFunction(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength) 
+void vMBMasterErrorCBExecuteFunction(UCHAR ucDestAddress, const UCHAR* pucPDUData, USHORT ucPDULength)
 {
     BOOL ret = xMBMasterPortEventPost(EV_MASTER_ERROR_EXECUTE_FUNCTION);
-    if(ret != TRUE) {
-        ESP_LOGE(MB_PORT_TAG,"xMBMasterPortEventPost event 'EV_MASTER_ERROR_EXECUTE_FUNCTION' failed!!!");
-    }
+    MB_PORT_CHECK((ret == TRUE), ; , "%s: Post event 'EV_MASTER_ERROR_EXECUTE_FUNCTION' failed!", __func__);
+    ESP_LOGD(MB_PORT_TAG,"%s:Callback execute data handler failure.", __func__);
+    ESP_LOG_BUFFER_HEX_LEVEL("Exec func buf", (void*)pucPDUData, (uint16_t)ucPDULength, ESP_LOG_DEBUG);
 }
 
 /**
@@ -244,9 +256,8 @@ void vMBMasterCBRequestSuccess( void ) {
      * If you don't use OS, you can change it.
      */
     BOOL ret = xMBMasterPortEventPost(EV_MASTER_PROCESS_SUCCESS);
-    if (ret != TRUE) {
-        ESP_LOGE(MB_PORT_TAG,"xMBMasterPortEventPost event 'EV_MASTER_PROCESS_SUCCESS' failed!!!");
-    }
+    MB_PORT_CHECK((ret == TRUE), ; , "%s: Post event 'EV_MASTER_PROCESS_SUCCESS' failed!", __func__);
+    ESP_LOGD(MB_PORT_TAG,"%s: Callback request success.", __func__);
 }
 
 /**
@@ -271,21 +282,27 @@ eMBMasterReqErrCode eMBMasterWaitRequestFinish( void ) {
     if (xRecvedEvent) {
         ESP_LOGD(MB_PORT_TAG,"%s: returned event = 0x%x", __func__, xRecvedEvent);
         if (!(xRecvedEvent & MB_EVENT_REQ_MASK)) {
-            // if we wait for certain event bits but get other then set in mask
+            // if we wait for certain event bits but get from poll subset
             ESP_LOGE(MB_PORT_TAG,"%s: incorrect event set = 0x%x", __func__, xRecvedEvent);
         }
-        if MB_CHECK_EVENT(xRecvedEvent, EV_MASTER_PROCESS_SUCCESS) {
+        xEventGroupSetBits( xEventGroupMasterConfirmHdl, (xRecvedEvent & MB_EVENT_REQ_MASK) );
+        if (MB_PORT_CHECK_EVENT(xRecvedEvent, EV_MASTER_PROCESS_SUCCESS)) {
             eErrStatus = MB_MRE_NO_ERR;
-        } else if MB_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_RESPOND_TIMEOUT){
+        } else if (MB_PORT_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_RESPOND_TIMEOUT)) {
             eErrStatus = MB_MRE_TIMEDOUT;
-        } else if MB_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_RECEIVE_DATA){
+        } else if (MB_PORT_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_RECEIVE_DATA)) {
             eErrStatus = MB_MRE_REV_DATA;
-        } else if MB_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_EXECUTE_FUNCTION){
+        } else if (MB_PORT_CHECK_EVENT(xRecvedEvent, EV_MASTER_ERROR_EXECUTE_FUNCTION)) {
             eErrStatus = MB_MRE_EXE_FUN;
         }
     } else {
-        ESP_LOGE(MB_PORT_TAG,"%s: Incorrect event or timeout xRecvedEvent = 0x%x", __func__, xRecvedEvent);
-        assert(0);
+        ESP_LOGE(MB_PORT_TAG,"%s: Incorrect event or timeout xRecvedEvent = 0x%x", __func__, uxBits);
+        // https://github.com/espressif/esp-idf/issues/5275
+        // if a no event is received, that means vMBMasterPortEventClose()
+        // has been closed, so event group has been deleted by FreeRTOS, which
+        // triggers the send of 0 value to the event group to unlock this task
+        // waiting on it. For this patch, handles it as a time out without assert.
+        eErrStatus = MB_MRE_TIMEDOUT;
     }
     return eErrStatus;
 }
@@ -293,7 +310,8 @@ eMBMasterReqErrCode eMBMasterWaitRequestFinish( void ) {
 void vMBMasterPortEventClose(void)
 {
     vEventGroupDelete(xEventGroupMasterHdl);
-    vSemaphoreDelete(xSemaphorMasterHdl);
+    vEventGroupDelete(xEventGroupMasterConfirmHdl);
+    vEventGroupDelete(xResourceMasterHdl);
 }
 
 #endif

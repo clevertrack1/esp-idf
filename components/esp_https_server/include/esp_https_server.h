@@ -1,16 +1,8 @@
-// Copyright 2018 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2018-2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 #ifndef _ESP_HTTPS_SERVER_H_
 #define _ESP_HTTPS_SERVER_H_
@@ -41,11 +33,21 @@ struct httpd_ssl_config {
      */
     httpd_config_t httpd;
 
-    /** CA certificate */
+    /** CA certificate (here it is treated as server cert)
+     * Todo: Fix this change in release/v5.0 as it would be a breaking change
+     * i.e. Rename the nomenclature of variables holding different certs in https_server component as well as example
+     * 1)The cacert variable should hold the CA which is used to authenticate clients (should inherit current role of client_verify_cert_pem var)
+     * 2)There should be another variable servercert which whould hold servers own certificate (should inherit current role of cacert var) */
     const uint8_t *cacert_pem;
 
     /** CA certificate byte length */
     size_t cacert_len;
+
+    /** Client verify authority certificate (CA used to sign clients, or client cert itself */
+    const uint8_t *client_verify_cert_pem;
+
+    /** Client verify authority cert len */
+    size_t client_verify_cert_len;
 
     /** Private key */
     const uint8_t *prvtkey_pem;
@@ -100,6 +102,8 @@ typedef struct httpd_ssl_config httpd_ssl_config_t;
     },                                            \
     .cacert_pem = NULL,                           \
     .cacert_len = 0,                              \
+    .client_verify_cert_pem = NULL,               \
+    .client_verify_cert_len = 0,                  \
     .prvtkey_pem = NULL,                          \
     .prvtkey_len = 0,                             \
     .transport_mode = HTTPD_SSL_TRANSPORT_SECURE, \

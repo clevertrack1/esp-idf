@@ -7,19 +7,18 @@ set(include_dirs
     )
 
 set(srcs
-    "apps/dhcpserver/dhcpserver.c"
-    "apps/ping/esp_ping.c"
-    "apps/ping/ping.c"
     "apps/sntp/sntp.c"
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
     "lwip/src/api/err.c"
+    "lwip/src/api/if_api.c"
     "lwip/src/api/netbuf.c"
     "lwip/src/api/netdb.c"
     "lwip/src/api/netifapi.c"
     "lwip/src/api/sockets.c"
     "lwip/src/api/tcpip.c"
     "lwip/src/apps/sntp/sntp.c"
+    "lwip/src/apps/netbiosns/netbiosns.c"
     "lwip/src/core/def.c"
     "lwip/src/core/dns.c"
     "lwip/src/core/inet_chksum.c"
@@ -43,6 +42,7 @@ set(srcs
     "lwip/src/core/ipv4/icmp.c"
     "lwip/src/core/ipv4/igmp.c"
     "lwip/src/core/ipv4/ip4.c"
+    "lwip/src/core/ipv4/ip4_napt.c"
     "lwip/src/core/ipv4/ip4_addr.c"
     "lwip/src/core/ipv4/ip4_frag.c"
     "lwip/src/core/ipv6/dhcp6.c"
@@ -82,12 +82,11 @@ set(srcs
     "lwip/src/netif/ppp/upap.c"
     "lwip/src/netif/ppp/utils.c"
     "lwip/src/netif/ppp/vj.c"
-    "port/esp32/vfs_lwip.c"
+    "port/esp32/hooks/tcp_isn_default.c"
+    "port/esp32/hooks/lwip_default_hooks.c"
     "port/esp32/debug/lwip_debug.c"
     "port/esp32/freertos/sys_arch.c"
     "port/esp32/netif/dhcp_state.c"
-    "port/esp32/netif/ethernetif.c"
-    "port/esp32/netif/nettestif.c"
     "port/esp32/netif/wlanif.c")
 
 if(CONFIG_LWIP_PPP_SUPPORT)
@@ -124,24 +123,54 @@ if(CONFIG_LWIP_PPP_SUPPORT)
         "lwip/src/netif/ppp/polarssl/sha1.c")
 endif()
 
+if(CONFIG_ETH_ENABLED)
+    list(APPEND srcs "port/esp32/netif/ethernetif.c")
+endif()
+
+if(CONFIG_VFS_SUPPORT_IO)
+    list(APPEND srcs "port/esp32/vfs_lwip.c")
+else()
+    list(APPEND srcs "port/esp32/no_vfs_syscalls.c")
+endif()
+
+if(CONFIG_OPENTHREAD_ENABLED)
+    list(APPEND srcs "port/esp32/netif/openthreadif.c")
+endif()
+
+if(CONFIG_LWIP_ICMP)
+    list(APPEND srcs
+        "apps/ping/esp_ping.c"
+        "apps/ping/ping.c"
+        "apps/ping/ping_sock.c")
+endif()
+
+if(CONFIG_LWIP_DHCPS)
+    list(APPEND srcs "apps/dhcpserver/dhcpserver.c")
+endif()
+
 idf_component_register(SRCS "${srcs}"
                     INCLUDE_DIRS "${include_dirs}"
                     LDFRAGMENTS linker.lf
                     REQUIRES vfs esp_wifi
-                    PRIV_REQUIRES esp_eth tcpip_adapter nvs_flash)
+                    PRIV_REQUIRES esp_eth esp_netif tcpip_adapter nvs_flash openthread)
 
 # lots of LWIP source files evaluate macros that check address of stack variables
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-address)
 
-if(GCC_NOT_5_2_0)
-    set_source_files_properties(
-        lwip/src/netif/ppp/ppp.c
-        PROPERTIES COMPILE_FLAGS
-        -Wno-uninitialized
-        )
-    set_source_files_properties(
-        lwip/src/netif/ppp/pppos.c
-        PROPERTIES COMPILE_FLAGS
-        -Wno-implicit-fallthrough
-        )
-endif()
+set_source_files_properties(
+    lwip/src/netif/ppp/ppp.c
+    PROPERTIES COMPILE_FLAGS
+    -Wno-uninitialized
+    )
+set_source_files_properties(
+    lwip/src/netif/ppp/pppos.c
+    PROPERTIES COMPILE_FLAGS
+    -Wno-implicit-fallthrough
+    )
+# "comparison is always false due to limited range of data type" warning
+# when setting CONFIG_LWIP_TCP_WND_DEFAULT to 65535
+set_source_files_properties(
+    lwip/src/core/tcp.c
+    PROPERTIES COMPILE_FLAGS
+    -Wno-type-limits
+)

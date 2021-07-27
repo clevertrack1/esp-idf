@@ -16,11 +16,21 @@
 #define _ESP_TRANSPORT_H_
 
 #include <esp_err.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/**
+*  @brief Keep alive parameters structure
+*/
+typedef struct esp_transport_keepalive {
+    bool            keep_alive_enable;      /*!< Enable keep-alive timeout */
+    int             keep_alive_idle;        /*!< Keep-alive idle time (second) */
+    int             keep_alive_interval;    /*!< Keep-alive interval time (second) */
+    int             keep_alive_count;       /*!< Keep-alive packet retry send count */
+} esp_transport_keep_alive_t;
 
 typedef struct esp_transport_internal* esp_transport_list_handle_t;
 typedef struct esp_transport_item_t* esp_transport_handle_t;
@@ -133,7 +143,7 @@ esp_err_t esp_transport_set_default_port(esp_transport_handle_t t, int port);
  * @param      t           The transport handle
  * @param[in]  host        Hostname
  * @param[in]  port        Port
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  * - socket for will use by this transport
@@ -147,7 +157,7 @@ int esp_transport_connect(esp_transport_handle_t t, const char *host, int port, 
  * @param      t           The transport handle
  * @param[in]  host        Hostname
  * @param[in]  port        Port
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  * - socket for will use by this transport
@@ -161,7 +171,7 @@ int esp_transport_connect_async(esp_transport_handle_t t, const char *host, int 
  * @param      t           The transport handle
  * @param      buffer      The buffer
  * @param[in]  len         The length
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  *  - Number of bytes was read
@@ -173,7 +183,7 @@ int esp_transport_read(esp_transport_handle_t t, char *buffer, int len, int time
  * @brief      Poll the transport until readable or timeout
  *
  * @param[in]  t           The transport handle
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  *     - 0      Timeout
@@ -188,7 +198,7 @@ int esp_transport_poll_read(esp_transport_handle_t t, int timeout_ms);
  * @param      t           The transport handle
  * @param      buffer      The buffer
  * @param[in]  len         The length
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  *  - Number of bytes was written
@@ -200,7 +210,7 @@ int esp_transport_write(esp_transport_handle_t t, const char *buffer, int len, i
  * @brief      Poll the transport until writeable or timeout
  *
  * @param[in]  t           The transport handle
- * @param[in]  timeout_ms  The timeout milliseconds
+ * @param[in]  timeout_ms  The timeout milliseconds (-1 indicates wait forever)
  *
  * @return
  *     - 0      Timeout
@@ -310,10 +320,25 @@ esp_err_t esp_transport_set_parent_transport_func(esp_transport_handle_t t, payl
  * @return
  *            - valid pointer of esp_error_handle_t
  *            - NULL if invalid transport handle
-  */
+ */
 esp_tls_error_handle_t esp_transport_get_error_handle(esp_transport_handle_t t);
 
-
+/**
+ * @brief      Get and clear last captured socket errno
+ *
+ * Socket errno is internally stored whenever any of public facing API
+ * for reading, writing, polling or connection fails returning negative return code.
+ * The error code corresponds to the `SO_ERROR` value retrieved from the underlying
+ * transport socket using `getsockopt()` API. After reading the captured errno,
+ * the internal value is cleared to 0.
+ *
+ * @param[in] t The transport handle
+ *
+ * @return
+ *   - >=0 Last captured socket errno
+ *   - -1  Invalid transport handle or invalid transport's internal error storage
+ */
+int esp_transport_get_errno(esp_transport_handle_t t);
 
 #ifdef __cplusplus
 }

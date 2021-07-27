@@ -88,6 +88,13 @@ static void fragment_and_dispatch(BT_HDR *packet)
         controller->get_acl_data_size_ble();
 
     max_packet_size = max_data_size + HCI_ACL_PREAMBLE_SIZE;
+    if((packet->len > max_packet_size) && (packet->layer_specific == 0) && (event == MSG_STACK_TO_HC_HCI_ACL)) {
+        packet->event = MSG_HC_TO_STACK_L2C_SEG_XMIT;
+        current_fragment_packet = NULL;
+        callbacks->transmit_finished(packet, false);
+        return;
+
+    }
     remaining_length = packet->len;
     STREAM_TO_UINT16(continuation_handle, stream);
     continuation_handle = APPLY_CONTINUATION_FLAG(continuation_handle);
@@ -134,7 +141,7 @@ static void reassemble_and_dispatch(BT_HDR *packet)
         uint8_t *stream = packet->data + packet->offset;
         uint16_t handle;
         uint16_t l2cap_length;
-        uint16_t acl_length;
+        uint16_t acl_length __attribute__((unused));
 
         STREAM_TO_UINT16(handle, stream);
         STREAM_TO_UINT16(acl_length, stream);
@@ -229,4 +236,3 @@ const packet_fragmenter_t *packet_fragmenter_get_interface(void)
     controller = controller_get_interface();
     return &interface;
 }
-

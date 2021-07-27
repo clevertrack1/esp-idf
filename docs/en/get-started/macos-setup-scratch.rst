@@ -7,11 +7,11 @@ Setup Toolchain for Mac OS from Scratch
 Package Manager
 ===============
 
-To set up the toolchain from scratch, rather than :doc:`downloading a pre-compiled toolchain<macos-setup>`, you will need to install either the MacPorts_ or homebrew_ package manager.
+To set up the toolchain from scratch, rather than :doc:`downloading a pre-compiled toolchain<macos-setup>`, you will need to install either the MacPorts_ or Homebrew_ package manager.
 
-MacPorts needs a full XCode installation, while homebrew only needs XCode command line tools.
+MacPorts needs a full XCode installation, while Homebrew only needs XCode command line tools.
 
-    .. _homebrew: https://brew.sh/
+    .. _Homebrew: https://brew.sh/
     .. _MacPorts: https://www.macports.org/install.php
 
 See :ref:`Customized Setup of Toolchain <get-started-customized-setup>` section for some of the reasons why installing the toolchain from scratch may be necessary.
@@ -29,24 +29,24 @@ Install Prerequisites
 
 - install CMake & Ninja build:
 
-  - If you have HomeBrew, you can run::
+  - If you have Homebrew, you can run::
 
-      brew install cmake ninja
+      brew install cmake ninja dfu-util
 
   - If you have MacPorts, you can run::
 
-      sudo port install cmake ninja
+      sudo port install cmake ninja dfu-util
 
 Compile the Toolchain from Source
 =================================
 
-- Install dependencies:
+Install dependencies:
 
   - with MacPorts::
 
         sudo port install gsed gawk binutils gperf grep gettext wget libtool autoconf automake make
 
-  - with homebrew::
+  - with Homebrew::
 
         brew install gnu-sed gawk binutils gperftools gettext wget help2man libtool autoconf automake make
 
@@ -69,16 +69,15 @@ Go into the newly created directory::
 
 Download ``crosstool-NG`` and build it:
 
-.. include:: /_build/inc/scratch-build-code.inc
+.. include-build-file:: inc/scratch-build-code.inc
 
 Build the toolchain::
 
-    ./ct-ng xtensa-esp32-elf
+    ./ct-ng {IDF_TARGET_TOOLCHAIN_PREFIX}
     ./ct-ng build
-    chmod -R u+w builds/xtensa-esp32-elf
+    chmod -R u+w builds/{IDF_TARGET_TOOLCHAIN_PREFIX}
 
-Toolchain will be built in ``~/esp/ctng-volume/crosstool-NG/builds/xtensa-esp32-elf``. To use it, you need to add ``~/esp/ctng-volume/crosstool-NG/builds/xtensa-esp32-elf/bin`` to ``PATH`` environment variable.
-
+Toolchain will be built in ``~/esp/ctng-volume/crosstool-NG/builds/{IDF_TARGET_TOOLCHAIN_PREFIX}``. To use it, you need to add ``~/esp/ctng-volume/crosstool-NG/builds/{IDF_TARGET_TOOLCHAIN_PREFIX}/bin`` to ``PATH`` environment variable.
 
 Next Steps
 ==========

@@ -1,24 +1,13 @@
 from __future__ import print_function
-import re
-import os
-import sys
 
-try:
-    import IDF
-except ImportError:
-    # this is a test case write with tiny-test-fw.
-    # to run test cases outside tiny-test-fw,
-    # we need to set environment variable `TEST_FW_PATH`,
-    # then get and insert `TEST_FW_PATH` to sys path before import FW module
-    test_fw_path = os.getenv('TEST_FW_PATH')
-    if test_fw_path and test_fw_path not in sys.path:
-        sys.path.insert(0, test_fw_path)
-    import IDF
+import re
+
+import ttfw_idf
 
 STARTING_TIMERS_REGEX = re.compile(r'Started timers, time since boot: (\d+) us')
 
-# name, period, next_alarm, times_started, times_fired, cb_exec_time
-TIMER_DUMP_LINE_REGEX = re.compile(r'([\w-]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)')
+# name, period, next_alarm, times_started, times_fired, times_skipped, cb_exec_time
+TIMER_DUMP_LINE_REGEX = re.compile(r'([\w-]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)')
 
 PERIODIC_TIMER_REGEX = re.compile(r'Periodic timer called, time since boot: (\d+) us')
 
@@ -37,7 +26,7 @@ LIGHT_SLEEP_TIME = 500000
 ONE_SHOT_TIMER_PERIOD = 5000000
 
 
-@IDF.idf_example_test(env_tag='Example_WIFI')
+@ttfw_idf.idf_example_test(env_tag='Example_GENERIC', target=['esp32'])
 def test_examples_system_esp_timer(env, extra_data):
     dut = env.get_dut('esp_timer_example', 'examples/system/esp_timer')
     # start test
@@ -62,7 +51,7 @@ def test_examples_system_esp_timer(env, extra_data):
     one_shot_timer_time = int(groups[0])
     diff = start_time + ONE_SHOT_TIMER_PERIOD - one_shot_timer_time
     print('One-shot timer, time: {} us, diff: {}'.format(one_shot_timer_time, diff))
-    assert(abs(diff) < 200)
+    assert(abs(diff) < 220)
 
     groups = dut.expect(RESTART_REGEX, timeout=3)
     start_time = int(groups[0])

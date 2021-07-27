@@ -15,12 +15,15 @@
 #include <string.h>
 #include "unity.h"
 #include "test_utils.h"
-#include "esp32/rom/ets_sys.h"
-#include "esp32/rom/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "tcpip_adapter.h"
+#include "esp_netif.h"
 #include "lwip/sockets.h"
+#include "sdkconfig.h"
+#if !CONFIG_FREERTOS_UNICORE
+#include "esp_ipc.h"
+#include "esp_freertos_hooks.h"
+#endif
 
 const esp_partition_t *get_test_data_partition(void)
 {
@@ -34,7 +37,7 @@ const esp_partition_t *get_test_data_partition(void)
 void test_case_uses_tcpip(void)
 {
     // Can be called more than once, does nothing on subsequent calls
-    tcpip_adapter_init();
+    esp_netif_init();
 
     // Allocate all sockets then free them
     // (First time each socket is allocated some one-time allocations happen.)
@@ -51,7 +54,7 @@ void test_case_uses_tcpip(void)
     // Allow LWIP tasks to finish initialising themselves
     vTaskDelay(25 / portTICK_RATE_MS);
 
-    printf("Note: tcpip_adapter_init() has been called. Until next reset, TCP/IP task will periodicially allocate memory and consume CPU time.\n");
+    printf("Note: esp_netif_init() has been called. Until next reset, TCP/IP task will periodicially allocate memory and consume CPU time.\n");
 
     // Reset the leak checker as LWIP allocates a lot of memory on first run
     unity_reset_leak_checks();
@@ -70,7 +73,7 @@ static void wait_user_control(char* parameter_buf, uint8_t buf_len)
         buffer = sign;
         buffer_len = sizeof(sign) - 1;
     }
-    // workaround that unity_gets (UartRxString) will not set '\0' correctly
+    // workaround that unity_gets (esp_rom_uart_rx_string) will not set '\0' correctly
     bzero(buffer, buffer_len);
 
     unity_gets(buffer, buffer_len);
@@ -142,4 +145,94 @@ size_t test_utils_get_leak_level(esp_type_leak_t type_of_leak, esp_comp_leak_t c
         }
     }
     return leak_level;
+}
+
+#define EXHAUST_MEMORY_ENTRIES 100
+
+struct test_utils_exhaust_memory_record_s {
+    int *entries[EXHAUST_MEMORY_ENTRIES];
+};
+
+test_utils_exhaust_memory_rec test_utils_exhaust_memory(uint32_t caps, size_t limit)
+{
+    int idx = 0;
+    test_utils_exhaust_memory_rec rec = calloc(1, sizeof(struct test_utils_exhaust_memory_record_s));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rec, "test_utils_exhaust_memory: not enough free memory to allocate record structure!");
+
+    while (idx < EXHAUST_MEMORY_ENTRIES) {
+        size_t free_caps = heap_caps_get_largest_free_block(caps);
+        if (free_caps <= limit) {
+            return rec; // done!
+        }
+        rec->entries[idx] = heap_caps_malloc(free_caps - limit, caps);
+        TEST_ASSERT_NOT_NULL_MESSAGE(rec->entries[idx],
+                                     "test_utils_exhaust_memory: something went wrong while freeing up memory, is another task using heap?");
+        heap_caps_check_integrity_all(true);
+        idx++;
+    }
+
+    TEST_FAIL_MESSAGE("test_utils_exhaust_memory: The heap with the requested caps is too fragmented, increase EXHAUST_MEMORY_ENTRIES or defrag the heap!");
+    abort();
+}
+
+void test_utils_free_exhausted_memory(test_utils_exhaust_memory_rec rec)
+{
+    for (int i = 0; i < EXHAUST_MEMORY_ENTRIES; i++) {
+        free(rec->entries[i]);
+    }
+    free(rec);
+}
+
+#if !CONFIG_FREERTOS_UNICORE
+static SemaphoreHandle_t test_sem;
+
+static bool test_idle_hook_func(void)
+{
+    if (test_sem) {
+        xSemaphoreGive(test_sem);
+    }
+    return true;
+}
+
+static void test_task_delete_func(void *arg)
+{
+    vTaskDelete(arg);
+}
+#endif // !CONFIG_FREERTOS_UNICORE
+
+void test_utils_task_delete(TaskHandle_t thandle)
+{
+    /* Self deletion can not free up associated task dynamic memory immediately,
+     * hence not recommended for test scenarios */
+    TEST_ASSERT_NOT_NULL_MESSAGE(thandle, "test_utils_task_delete: handle is NULL");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(thandle, xTaskGetCurrentTaskHandle(), "test_utils_task_delete: handle is of currently executing task");
+
+#if CONFIG_FREERTOS_UNICORE
+    vTaskDelete(thandle);
+#else // CONFIG_FREERTOS_UNICORE
+    const BaseType_t tsk_affinity = xTaskGetAffinity(thandle);
+    const BaseType_t core_id = xPortGetCoreID();
+
+    printf("Task_affinity: 0x%x, current_core: %d\n", tsk_affinity, core_id);
+
+    if (tsk_affinity == tskNO_AFFINITY) {
+        /* For no affinity case, we wait for idle hook to trigger on different core */
+        esp_err_t ret = esp_register_freertos_idle_hook_for_cpu(test_idle_hook_func, !core_id);
+        TEST_ASSERT_EQUAL_MESSAGE(ret, ESP_OK, "test_utils_task_delete: failed to register idle hook");
+        vTaskDelete(thandle);
+        test_sem = xSemaphoreCreateBinary();
+        TEST_ASSERT_NOT_NULL_MESSAGE(test_sem, "test_utils_task_delete: failed to create semaphore");
+        xSemaphoreTake(test_sem, portMAX_DELAY);
+        esp_deregister_freertos_idle_hook_for_cpu(test_idle_hook_func, !core_id);
+        vSemaphoreDelete(test_sem);
+        test_sem = NULL;
+    } else if (tsk_affinity != core_id) {
+        /* Task affinity and current core are differnt, schedule IPC call (to delete task)
+         * on core where task is pinned to */
+        esp_ipc_call_blocking(tsk_affinity, test_task_delete_func, thandle);
+    } else {
+        /* Task affinity and current core are same, so we can safely proceed for deletion */
+        vTaskDelete(thandle);
+    }
+#endif // !CONFIG_FREERTOS_UNICORE
 }

@@ -129,6 +129,8 @@ size_t fixed_queue_capacity(fixed_queue_t *queue)
 
 bool fixed_queue_enqueue(fixed_queue_t *queue, void *data, uint32_t timeout)
 {
+    bool status=false; //Flag whether enqueued success
+
     assert(queue != NULL);
     assert(data != NULL);
 
@@ -137,13 +139,13 @@ bool fixed_queue_enqueue(fixed_queue_t *queue, void *data, uint32_t timeout)
     }
 
     osi_mutex_lock(&queue->lock, OSI_MUTEX_MAX_TIMEOUT);
-
-    list_append(queue->list, data);
+    status = list_append(queue->list, data); //Check whether enqueued success
     osi_mutex_unlock(&queue->lock);
 
-    osi_sem_give(&queue->dequeue_sem);
+    if(status == true )
+        osi_sem_give(&queue->dequeue_sem);
 
-    return true;
+    return status;
 }
 
 void *fixed_queue_dequeue(fixed_queue_t *queue, uint32_t timeout)
@@ -152,7 +154,7 @@ void *fixed_queue_dequeue(fixed_queue_t *queue, uint32_t timeout)
 
     assert(queue != NULL);
 
-    if (osi_sem_take(queue->dequeue_sem, timeout) != 0) {
+    if (osi_sem_take(&queue->dequeue_sem, timeout) != 0) {
         return NULL;
     }
 
@@ -206,14 +208,14 @@ void *fixed_queue_try_remove_from_queue(fixed_queue_t *queue, void *data)
 
     osi_mutex_lock(&queue->lock, OSI_MUTEX_MAX_TIMEOUT);
     if (list_contains(queue->list, data) &&
-            osi_sem_take(queue->dequeue_sem, 0) == 0) {
+            osi_sem_take(&queue->dequeue_sem, 0) == 0) {
         removed = list_remove(queue->list, data);
         assert(removed);
     }
     osi_mutex_unlock(&queue->lock);
 
     if (removed) {
-        osi_sem_give(queue->enqueue_sem);
+        osi_sem_give(&queue->enqueue_sem);
         return data;
     }
 
@@ -252,4 +254,3 @@ void fixed_queue_process(fixed_queue_t *queue)
         queue->dequeue_ready(queue);
     }
 }
-

@@ -5,16 +5,18 @@ SOURCE_FILES := \
 	$(addprefix ../, \
 	partition.c \
 	flash_ops.c \
+	esp32/flash_ops_esp32.c \
 	) \
 
 INCLUDE_DIRS := \
 	. \
+	../ \
 	../include \
 	../private_include \
 	$(addprefix stubs/, \
 	app_update/include \
 	driver/include \
-	esp32/include \
+	esp_timer/include \
 	freertos/include \
 	log/include \
 	newlib/include \
@@ -24,12 +26,18 @@ INCLUDE_DIRS := \
 	$(addprefix ../../../components/, \
 	esp_rom/include \
 	esp_common/include \
+	esp_hw_support/include \
+	esp_hw_support/include/soc \
+	esp_system/include \
 	xtensa/include \
 	xtensa/esp32/include \
 	soc/esp32/include \
+       	heap/include \
 	soc/include \
 	esp32/include \
+	esp_timer/include \
 	bootloader_support/include \
 	app_update/include \
+	hal/include \
 	spi_flash/include \
 	)

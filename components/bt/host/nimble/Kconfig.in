@@ -1,11 +1,81 @@
 
+choice BT_NIMBLE_MEM_ALLOC_MODE
+    prompt "Memory allocation strategy"
+    default BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL
+    help
+        Allocation strategy for NimBLE host stack, essentially provides ability to
+        allocate all required dynamic allocations from,
+
+        - Internal DRAM memory only
+        - External SPIRAM memory only
+        - Either internal or external memory based on default malloc()
+          behavior in ESP-IDF
+        - Internal IRAM memory wherever applicable else internal DRAM
+
+    config BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL
+        bool "Internal memory"
+
+    config BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL
+        bool "External SPIRAM"
+        depends on SPIRAM_USE_CAPS_ALLOC || SPIRAM_USE_MALLOC
+
+    config BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT
+        bool "Default alloc mode"
+
+    config BT_NIMBLE_MEM_ALLOC_MODE_IRAM_8BIT
+        bool "Internal IRAM"
+        depends on ESP32_IRAM_AS_8BIT_ACCESSIBLE_MEMORY
+        help
+            Allows to use IRAM memory region as 8bit accessible region.
+
+            Every unaligned (8bit or 16bit) access will result in an exception
+            and incur penalty of certain clock cycles per unaligned read/write.
+
+endchoice #BT_NIMBLE_MEM_ALLOC_MODE
+
+choice BT_NIMBLE_LOG_LEVEL
+    prompt "NimBLE Host log verbosity"
+    depends on BT_NIMBLE_ENABLED
+    default BT_NIMBLE_LOG_LEVEL_INFO
+    help
+        Select NimBLE log level. Please make a note that the selected NimBLE log
+        verbosity can not exceed the level set in "Component config --> Log output
+        --> Default log verbosity".
+
+    config BT_NIMBLE_LOG_LEVEL_NONE
+        bool "No logs"
+    config BT_NIMBLE_LOG_LEVEL_CRIT
+        bool "Critical logs"
+    config BT_NIMBLE_LOG_LEVEL_ERROR
+        bool "Error logs"
+    config BT_NIMBLE_LOG_LEVEL_WARNING
+        bool "Warning logs"
+    config BT_NIMBLE_LOG_LEVEL_INFO
+        bool "Info logs"
+    config BT_NIMBLE_LOG_LEVEL_DEBUG
+        bool "Debug logs"
+endchoice #BT_NIMBLE_LOG_LEVEL
+
+config BT_NIMBLE_LOG_LEVEL
+    int
+    default 0 if BT_NIMBLE_LOG_LEVEL_DEBUG
+    default 1 if BT_NIMBLE_LOG_LEVEL_INFO
+    default 2 if BT_NIMBLE_LOG_LEVEL_WARNING
+    default 3 if BT_NIMBLE_LOG_LEVEL_ERROR
+    default 4 if BT_NIMBLE_LOG_LEVEL_CRIT
+    default 5 if BT_NIMBLE_LOG_LEVEL_NONE
+
 config BT_NIMBLE_MAX_CONNECTIONS
     int "Maximum number of concurrent connections"
-    range 1 9
-    default 1
+    range 1 8 if (IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3)
+    range 1 9 if IDF_TARGET_ESP32
+    default 3
     depends on BT_NIMBLE_ENABLED
     help
-        Defines maximum number of concurrent BLE connections
+        Defines maximum number of concurrent BLE connections. For ESP32, user
+        is expected to configure BTDM_CTRL_BLE_MAX_CONN from controller menu
+        along with this option. Similarly for ESP32-C3 or ESP32-S3, user is expected to
+        configure BT_CTRL_BLE_MAX_ACT from controller menu.
 
 config BT_NIMBLE_MAX_BONDS
     int "Maximum number of bonds to save across reboots"
@@ -53,6 +123,7 @@ config BT_NIMBLE_PINNED_TO_CORE
 config BT_NIMBLE_TASK_STACK_SIZE
     int "NimBLE Host task stack size"
     depends on BT_NIMBLE_ENABLED
+    default 5120 if BLE_MESH
     default 4096
     help
         This configures stack size of NimBLE host task
@@ -99,11 +170,20 @@ config BT_NIMBLE_SM_SC
         Enable security manager secure connections
 
 config BT_NIMBLE_DEBUG
-    bool "Enable host debugging"
+    bool "Enable extra runtime asserts and host debugging"
     default n
     depends on BT_NIMBLE_ENABLED
     help
-        This enables extra runtime assertions
+        This enables extra runtime asserts and host debugging
+
+config BT_NIMBLE_SM_SC_DEBUG_KEYS
+    bool "Use predefined public-private key pair"
+    default n
+    depends on BT_NIMBLE_SM_SC
+    help
+        If this option is enabled, SM uses predefined DH key pair as described
+        in Core Specification, Vol. 3, Part H, 2.3.5.6.1. This allows to
+        decrypt air traffic easily and thus should only be used for debugging.
 
 config BT_NIMBLE_SVC_GAP_DEVICE_NAME
     string "BLE GAP default device name"
@@ -138,7 +218,7 @@ config BT_NIMBLE_SVC_GAP_APPEARANCE
 config BT_NIMBLE_ACL_BUF_COUNT
     int "ACL Buffer count"
     depends on BT_NIMBLE_ENABLED
-    default 12
+    default 20
     help
         The number of ACL data buffers.
 
@@ -153,9 +233,12 @@ config BT_NIMBLE_ACL_BUF_SIZE
 config BT_NIMBLE_HCI_EVT_BUF_SIZE
     int "HCI Event Buffer size"
     depends on BT_NIMBLE_ENABLED
+    default 257 if BT_NIMBLE_EXT_ADV
     default 70
     help
-        This is the size of each HCI event buffer in bytes
+        This is the size of each HCI event buffer in bytes. In case of
+        extended advertising, packets can be fragmented. 257 bytes is the
+        maximum size of a packet.
 
 config BT_NIMBLE_HCI_EVT_HI_BUF_COUNT
     int "High Priority HCI Event Buffer count"
@@ -176,6 +259,57 @@ config BT_NIMBLE_HCI_EVT_LO_BUF_COUNT
         buffers are only used for advertising reports. If there are no free
         low-priority event buffers, then an incoming advertising report will
         get dropped
+
+config BT_NIMBLE_MSYS1_BLOCK_COUNT
+    int "MSYS_1 Block Count"
+    depends on BT_NIMBLE_ENABLED
+    default 12
+    help
+        MSYS is a system level mbuf registry. For prepare write & prepare
+        responses MBUFs are allocated out of msys_1 pool. For NIMBLE_MESH
+        enabled cases, this block count is increased by 8 than user defined
+        count.
+
+config BT_NIMBLE_HS_FLOW_CTRL
+    bool "Enable Host Flow control"
+    depends on BT_NIMBLE_ENABLED
+    default n if BT_SOC_SUPPORT_5_0
+    default y
+    help
+        Enable Host Flow control
+
+config BT_NIMBLE_HS_FLOW_CTRL_ITVL
+    int "Host Flow control interval"
+    depends on BT_NIMBLE_HS_FLOW_CTRL
+    default 1000
+    help
+        Host flow control interval in msecs
+
+config BT_NIMBLE_HS_FLOW_CTRL_THRESH
+    int "Host Flow control threshold"
+    depends on BT_NIMBLE_HS_FLOW_CTRL
+    default 2
+    help
+        Host flow control threshold, if the number of free buffers are at or
+        below this threshold, send an immediate number-of-completed-packets
+        event
+
+config BT_NIMBLE_HS_FLOW_CTRL_TX_ON_DISCONNECT
+    bool "Host Flow control on disconnect"
+    depends on BT_NIMBLE_HS_FLOW_CTRL
+    default y
+    help
+        Enable this option to send number-of-completed-packets event to
+        controller after disconnection
+
+config BT_NIMBLE_RPA_TIMEOUT
+    int "RPA timeout in seconds"
+    range 1 41400
+    depends on BT_NIMBLE_ENABLED
+    default 900
+    help
+        Time interval between RPA address change. This is applicable in case of
+        Host based RPA
 
 menuconfig BT_NIMBLE_MESH
     bool "Enable BLE mesh functionality"
@@ -257,3 +391,118 @@ config BT_NIMBLE_MESH_DEVICE_NAME
     help
         This value defines Bluetooth Mesh device/node name
 
+config BT_NIMBLE_MESH_NODE_COUNT
+    int "Set mesh node count"
+    default 1
+    depends on BT_NIMBLE_MESH
+    help
+        Defines mesh node count.
+
+config BT_NIMBLE_MESH_PROVISIONER
+    bool "Enable BLE mesh provisioner"
+    default 0
+    depends on BT_NIMBLE_MESH
+    help
+        Enable mesh provisioner.
+
+config BT_NIMBLE_CRYPTO_STACK_MBEDTLS
+    bool "Override TinyCrypt with mbedTLS for crypto computations"
+    default y
+    depends on BT_NIMBLE_ENABLED
+    select MBEDTLS_ECP_RESTARTABLE
+    select MBEDTLS_CMAC_C
+    help
+        Enable this option to choose mbedTLS instead of TinyCrypt for crypto
+        computations.
+
+config BT_NIMBLE_HS_STOP_TIMEOUT_MS
+    int "BLE host stop timeout in msec"
+    default 2000
+    depends on BT_NIMBLE_ENABLED
+    help
+        BLE Host stop procedure timeout in milliseconds.
+
+config BT_NIMBLE_HOST_BASED_PRIVACY
+    bool "Enable host based privacy for random address."
+    default n
+    depends on BT_NIMBLE_ENABLED && !IDF_TARGET_ESP32
+    help
+        Use this option to do host based Random Private Address resolution.
+        If this option is disabled then controller based privacy is used.
+
+config BT_NIMBLE_ENABLE_CONN_REATTEMPT
+    bool "Enable connection reattempts on connection establishment error"
+    default y if (IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3)
+    default n if IDF_TARGET_ESP32
+    help
+        Enable to make the NimBLE host to reattempt GAP connection on connection
+        establishment failure.
+
+config BT_NIMBLE_MAX_CONN_REATTEMPT
+    int "Maximum number connection reattempts"
+    range 1 7
+    default 3
+    depends on BT_NIMBLE_ENABLED && BT_NIMBLE_ENABLE_CONN_REATTEMPT
+    help
+        Defines maximum number of connection reattempts.
+
+config BT_NIMBLE_EXT_ADV
+    bool "Enable extended advertising."
+    default n
+    depends on BT_NIMBLE_ENABLED && BT_SOC_SUPPORT_5_0
+    help
+        Enable this option to do extended advertising. Extended advertising
+        will be supported from BLE 5.0 onwards.
+
+config BT_NIMBLE_MAX_EXT_ADV_INSTANCES
+    int "Maximum number of extended advertising instances."
+    range 0 4
+    default 1 if BT_NIMBLE_EXT_ADV
+    default 0
+    depends on BT_NIMBLE_EXT_ADV
+    help
+        Change this option to set maximum number of extended advertising
+        instances. Minimum there is always one instance of
+        advertising. Enter how many more advertising instances you
+        want.
+
+config BT_NIMBLE_MAX_EXT_ADV_DATA_LEN
+    int "Maximum length of the advertising data."
+    range 0 1650
+    default 1650 if BT_NIMBLE_EXT_ADV
+    default 0
+    depends on BT_NIMBLE_EXT_ADV
+    help
+        Defines size of extended advertising data. Size should not increase
+        1650.
+
+config BT_NIMBLE_ENABLE_PERIODIC_ADV
+    bool "Enable periodic advertisement."
+    default y
+    depends on BT_NIMBLE_EXT_ADV
+    help
+        Enable this option to start periodic advertisement.
+
+config BT_NIMBLE_MAX_PERIODIC_SYNCS
+    int "Maximum number of periodic advertising syncs."
+    default 1 if BT_NIMBLE_ENABLE_PERIODIC_ADV
+    default 0
+    depends on BT_NIMBLE_ENABLE_PERIODIC_ADV
+    range 1 8
+    help
+        Set this option to set the upper limit for number of periodic sync
+        connections. This should be less than maximum connections allowed by
+        controller.
+
+config BT_NIMBLE_BLUFI_ENABLE
+    bool "Enable blufi functionality"
+    depends on BT_NIMBLE_ENABLED
+    default n
+    help
+        Set this option to enable blufi functionality.
+
+config BT_NIMBLE_USE_ESP_TIMER
+    bool "Enable Esp Timer for Nimble"
+    default y
+    help
+        Set this option to use Esp Timer which has higher priority timer instead of FreeRTOS timer

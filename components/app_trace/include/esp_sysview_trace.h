@@ -1,22 +1,18 @@
-// Copyright 2018 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2018-2021 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #ifndef ESP_SYSVIEW_TRACE_H_
 #define ESP_SYSVIEW_TRACE_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdarg.h>
 #include "esp_err.h"
-#include "SEGGER_RTT.h" // SEGGER_RTT_ESP32_Flush
+#include "SEGGER_RTT.h" // SEGGER_RTT_ESP_Flush
 #include "esp_app_trace_util.h" // ESP_APPTRACE_TMO_INFINITE
 
 /**
@@ -28,7 +24,7 @@
  */
 static inline esp_err_t esp_sysview_flush(uint32_t tmo)
 {
-    SEGGER_RTT_ESP32_Flush(0, tmo);
+    SEGGER_RTT_ESP_Flush(0, tmo);
     return ESP_OK;
 }
 
@@ -76,5 +72,9 @@ void esp_sysview_heap_trace_alloc(void *addr, uint32_t size, const void *callers
  *                  Array size must be CONFIG_HEAP_TRACING_STACK_DEPTH.
  */
 void esp_sysview_heap_trace_free(void *addr, const void *callers);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //ESP_SYSVIEW_TRACE_H_

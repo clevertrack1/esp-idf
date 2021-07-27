@@ -437,7 +437,7 @@ esp_log_buffer_hex(GATTC_TAG, gl_profile_tab[PROFILE_A_APP_ID].remote_bda,
 		sizeof(esp_bd_addr_t));
 ```
 
-The typical MTU size for a Bluetooth 4.0 connection is 23 bytes. A client can change the size of MUT, using `esp_ble_gattc_send_mtu_req()` function, which takes the GATT interface and the connection ID. The size of the requested MTU is defined by `esp_ble_gatt_set_local_mtu()`. The server can then accept or reject the request. The ESP32 supports a MTU size of up to 517 bytes, which is defined by the `ESP_GATT_MAX_MTU_SIZE` in `esp_gattc_api.h`. In this example, the MTU size is set to 500 bytes. In case the configuration fails, the returned error is printed:
+The typical MTU size for a Bluetooth 4.0 connection is 23 bytes. A client can change the size of MTU, using `esp_ble_gattc_send_mtu_req()` function, which takes the GATT interface and the connection ID. The size of the requested MTU is defined by `esp_ble_gatt_set_local_mtu()`. The server can then accept or reject the request. The ESP32 supports a MTU size of up to 517 bytes, which is defined by the `ESP_GATT_MAX_MTU_SIZE` in `esp_gattc_api.h`. In this example, the MTU size is set to 500 bytes. In case the configuration fails, the returned error is printed:
 
 ```c
 esp_err_t mtu_ret = esp_ble_gattc_send_mtu_req (gattc_if, conn_id);
@@ -484,6 +484,25 @@ Where,
 ```c
 #define REMOTE_SERVICE_UUID        0x00FF
 ```
+If UUID of the service application the user is interested in is 128-bit, then there is one note below for the user which is relevant with the little-endian storage mode of the processor architecture. 
+The struct of UUID is defined as:
+
+```c
+typedef struct {
+#define ESP_UUID_LEN_16     2
+#define ESP_UUID_LEN_32     4
+#define ESP_UUID_LEN_128    16
+    uint16_t len;							/*!< UUID length, 16bit, 32bit or 128bit */
+    union {
+        uint16_t    uuid16;                 /*!< 16bit UUID */
+        uint32_t    uuid32;                 /*!< 32bit UUID */
+        uint8_t     uuid128[ESP_UUID_LEN_128]; /*!< 128bit UUID */
+    } uuid;									/*!< UUID */
+} __attribute__((packed)) esp_bt_uuid_t;
+```
+
+Note: In little-endian storage mode, you can define service UUID directly in the normal order if it's a 16-bit or a 32-bit UUID, but if service UUID is 128-bit, there is minor difference. For example, if the UUID of the service application that the user is interested in is 12345678-a1b2-c3d4-e5f6-9fafd205e457, `REMOTE_SERVICE_UUID` should be defined as {0x57,0xE4,0x05,0xD2,0xAF,0x9F,0xF6,0xE5,0xD4,0xC3,0xB2,0xA1,0x78,0x56,0x34,0x12}.
+
 The services are then discovered as follows:
 
 ```c
@@ -551,7 +570,7 @@ case ESP_GATTC_SEARCH_CMPL_EVT:
         ESP_LOGE(GATTC_TAG, "search service failed, error status = %x", p_data->search_cmpl.status);
         break;
     }
-    conn_id = p_data->search_cmpl.conn_id;h
+    conn_id = p_data->search_cmpl.conn_id;
     if (get_server){
         uint16_t count = 0;
         esp_gatt_status_t status = esp_ble_gattc_get_attr_count( gattc_if,

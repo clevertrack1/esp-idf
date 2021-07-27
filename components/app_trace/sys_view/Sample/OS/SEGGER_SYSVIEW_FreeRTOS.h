@@ -80,7 +80,7 @@ Notes:
   #define portSTACK_GROWTH              ( -1 )
 #endif
 
-#define SYSVIEW_FREERTOS_MAX_NOF_TASKS  CONFIG_SYSVIEW_MAX_TASKS
+#define SYSVIEW_FREERTOS_MAX_NOF_TASKS  CONFIG_APPTRACE_SV_MAX_TASKS
 
 /*********************************************************************
 *
@@ -230,11 +230,12 @@ Notes:
 
 #define traceQUEUE_CREATE( pxNewQueue )                               SEGGER_SYSVIEW_RecordU32x3(apiFastID_OFFSET + apiID_XQUEUEGENERICCREATE, uxQueueLength, uxItemSize, ucQueueType)
 #define traceQUEUE_DELETE( pxQueue )                                  SEGGER_SYSVIEW_RecordU32(apiFastID_OFFSET + apiID_VQUEUEDELETE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue))
-#define traceQUEUE_PEEK( pxQueue )                                    SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), xTicksToWait, xJustPeeking)
+#define traceQUEUE_PEEK( pxQueue )                                    SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), xTicksToWait, 0)
 #define traceQUEUE_PEEK_FROM_ISR( pxQueue )                           SEGGER_SYSVIEW_RecordU32x2(apiFastID_OFFSET + apiID_XQUEUEPEEKFROMISR, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer))
 #define traceQUEUE_PEEK_FROM_ISR_FAILED( pxQueue )                    SEGGER_SYSVIEW_RecordU32x2(apiFastID_OFFSET + apiID_XQUEUEPEEKFROMISR, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer))
-#define traceQUEUE_RECEIVE( pxQueue )                                 SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), xTicksToWait, xJustPeeking)
-#define traceQUEUE_RECEIVE_FAILED( pxQueue )                          SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), xTicksToWait, xJustPeeking)
+#define traceQUEUE_RECEIVE( pxQueue )                                 SEGGER_SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)0), xTicksToWait, 1)
+#define traceQUEUE_RECEIVE_FAILED( pxQueue )                          SEGGER_SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)0), xTicksToWait, 1)
+#define traceQUEUE_SEMAPHORE_RECEIVE( pxQueue )                       SEGGER_SYSVIEW_RecordU32x4(apiFastID_OFFSET + apiID_XQUEUEGENERICRECEIVE, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)0), xTicksToWait, 0)
 #define traceQUEUE_RECEIVE_FROM_ISR( pxQueue )                        SEGGER_SYSVIEW_RecordU32x3(apiFastID_OFFSET + apiID_XQUEUERECEIVEFROMISR, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), (U32)pxHigherPriorityTaskWoken)
 #define traceQUEUE_RECEIVE_FROM_ISR_FAILED( pxQueue )                 SEGGER_SYSVIEW_RecordU32x3(apiFastID_OFFSET + apiID_XQUEUERECEIVEFROMISR, SEGGER_SYSVIEW_ShrinkId((U32)pxQueue), SEGGER_SYSVIEW_ShrinkId((U32)pvBuffer), (U32)pxHigherPriorityTaskWoken)
 #define traceQUEUE_REGISTRY_ADD( xQueue, pcQueueName )                SEGGER_SYSVIEW_RecordU32x2(apiFastID_OFFSET + apiID_VQUEUEADDTOREGISTRY, SEGGER_SYSVIEW_ShrinkId((U32)xQueue), (U32)pcQueueName)
@@ -289,12 +290,12 @@ Notes:
   #define traceTASK_SWITCHED_IN()                   if(prvGetTCBFromHandle(NULL) == xTaskGetIdleTaskHandle()) {           \
                                                       SEGGER_SYSVIEW_OnIdle();                                          \
                                                     } else {                                                            \
-                                                      SEGGER_SYSVIEW_OnTaskStartExec((U32)pxCurrentTCB[xPortGetCoreID()]); \
+                                                      SEGGER_SYSVIEW_OnTaskStartExec((U32)pxCurrentTCB[cpu_hal_get_core_id()]); \
                                                     }
 #else
   #define traceTASK_SWITCHED_IN()                   {                                                                   \
-                                                      if (memcmp(pxCurrentTCB[xPortGetCoreID()]->pcTaskName, "IDLE", 5) != 0) { \
-                                                        SEGGER_SYSVIEW_OnTaskStartExec((U32)pxCurrentTCB[xPortGetCoreID()]);    \
+                                                      if (memcmp(pxCurrentTCB[cpu_hal_get_core_id()]->pcTaskName, "IDLE", 5) != 0) { \
+                                                        SEGGER_SYSVIEW_OnTaskStartExec((U32)pxCurrentTCB[cpu_hal_get_core_id()]);    \
                                                       } else {                                                          \
                                                         SEGGER_SYSVIEW_OnIdle();                                        \
                                                       }                                                                 \
@@ -304,13 +305,14 @@ Notes:
 #define traceMOVED_TASK_TO_READY_STATE(pxTCB)       SEGGER_SYSVIEW_OnTaskStartReady((U32)pxTCB)
 #define traceREADDED_TASK_TO_READY_STATE(pxTCB)
 
-#define traceMOVED_TASK_TO_DELAYED_LIST()           SEGGER_SYSVIEW_OnTaskStopReady((U32)pxCurrentTCB[xPortGetCoreID()],  (1u << 2))
-#define traceMOVED_TASK_TO_OVERFLOW_DELAYED_LIST()  SEGGER_SYSVIEW_OnTaskStopReady((U32)pxCurrentTCB[xPortGetCoreID()],  (1u << 2))
+#define traceMOVED_TASK_TO_DELAYED_LIST()           SEGGER_SYSVIEW_OnTaskStopReady((U32)pxCurrentTCB[cpu_hal_get_core_id()],  (1u << 2))
+#define traceMOVED_TASK_TO_OVERFLOW_DELAYED_LIST()  SEGGER_SYSVIEW_OnTaskStopReady((U32)pxCurrentTCB[cpu_hal_get_core_id()],  (1u << 2))
 #define traceMOVED_TASK_TO_SUSPENDED_LIST(pxTCB)    SEGGER_SYSVIEW_OnTaskStopReady((U32)pxTCB,         ((3u << 3) | 3))
 
 #define traceISR_EXIT_TO_SCHEDULER()                SEGGER_SYSVIEW_RecordExitISRToScheduler()
 #define traceISR_EXIT()                             SEGGER_SYSVIEW_RecordExitISR()
 #define traceISR_ENTER(_n_)                         SEGGER_SYSVIEW_RecordEnterISR(_n_)
+
 
 /*********************************************************************
 *

@@ -28,7 +28,7 @@ extern "C" {
 #endif
 
 #if defined(MBEDTLS_AES_ALT)
-#include "esp32/aes.h"
+#include "aes/esp_aes.h"
 
 typedef esp_aes_context mbedtls_aes_context;
 
